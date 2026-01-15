@@ -8,11 +8,11 @@
 
 | Phase       | Status     | Description                                                     |
 | ----------- | ---------- | --------------------------------------------------------------- |
-| **Phase 1** | ⏳ Pending | Update Rust backend for shared apps + workspace data structure  |
+| **Phase 1** | ✅ Done    | Update Rust backend for shared apps + workspace data structure  |
 | **Phase 2** | ✅ Done    | npm packages published (`@moldable-ai/ui`, `editor`, `storage`) |
 | **Phase 3** | ✅ Done    | Apps repo created (`moldable-ai/apps` with `manifest.json`)     |
 | **Phase 4** | ⏳ Pending | Desktop auto-update system (Tauri updater plugin)               |
-| **Phase 5** | ⏳ Pending | App installation from registry (Browse Apps UI)                 |
+| **Phase 5** | ✅ Done    | App installation from registry (Browse Apps UI)                 |
 | **Phase 6** | ⏳ Pending | App update system (upstream tracking, merge UI)                 |
 
 ---

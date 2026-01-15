@@ -255,6 +255,8 @@ impl TempMoldableEnv {
 
     fn create_shared_dir(&self) {
         let shared_dir = self.moldable_root.join("shared");
+        fs::create_dir_all(shared_dir.join("apps")).unwrap();
+        fs::create_dir_all(shared_dir.join("scripts")).unwrap();
         fs::create_dir_all(shared_dir.join("skills")).unwrap();
         fs::create_dir_all(shared_dir.join("config")).unwrap();
     }
@@ -426,19 +428,25 @@ fn test_fresh_install_default_workspace_setup() {
     let personal_workspace = env.moldable_root.join("workspaces/personal");
     fs::create_dir_all(&personal_workspace).unwrap();
 
-    // 2. Create shared directory
+    // 2. Create shared directory with subdirs
     let shared_dir = env.moldable_root.join("shared");
-    fs::create_dir_all(&shared_dir).unwrap();
+    fs::create_dir_all(shared_dir.join("apps")).unwrap();
+    fs::create_dir_all(shared_dir.join("scripts")).unwrap();
+    fs::create_dir_all(shared_dir.join("skills")).unwrap();
+    fs::create_dir_all(shared_dir.join("config")).unwrap();
 
-    // 3. Create default workspaces.json
+    // 3. Create cache directory
+    fs::create_dir_all(env.moldable_root.join("cache")).unwrap();
+
+    // 4. Create default workspaces.json
     env.create_workspaces_config(&WorkspacesConfig::default());
 
-    // 4. Create workspace subdirectories (apps, conversations, config)
+    // 5. Create workspace subdirectories (apps, conversations, config)
     fs::create_dir_all(personal_workspace.join("apps")).unwrap();
     fs::create_dir_all(personal_workspace.join("conversations")).unwrap();
     fs::create_dir_all(personal_workspace.join("config")).unwrap();
 
-    // 5. Create default config.json
+    // 6. Create default config.json
     let default_config = MoldableConfig::default();
     let config_path = personal_workspace.join("config.json");
     let content = serde_json::to_string_pretty(&default_config).unwrap();
@@ -452,6 +460,11 @@ fn test_fresh_install_default_workspace_setup() {
     assert!(env.moldable_root.join("workspaces/personal/config").exists());
     assert!(env.moldable_root.join("workspaces/personal/config.json").exists());
     assert!(env.moldable_root.join("shared").exists());
+    assert!(env.moldable_root.join("shared/apps").exists());
+    assert!(env.moldable_root.join("shared/scripts").exists());
+    assert!(env.moldable_root.join("shared/skills").exists());
+    assert!(env.moldable_root.join("shared/config").exists());
+    assert!(env.moldable_root.join("cache").exists());
 
     // Verify workspaces.json has correct defaults
     let workspaces_config = env.read_workspaces_config();
@@ -474,7 +487,7 @@ fn test_workspace_directory_structure() {
     env.create_workspace_dir("personal");
     env.create_shared_dir();
 
-    // Verify directories exist
+    // Verify workspace directories exist
     assert!(env.moldable_root.join("workspaces/personal/apps").exists());
     assert!(env
         .moldable_root
@@ -484,8 +497,29 @@ fn test_workspace_directory_structure() {
         .moldable_root
         .join("workspaces/personal/config")
         .exists());
+    
+    // Verify shared directories exist
+    assert!(env.moldable_root.join("shared/apps").exists());
+    assert!(env.moldable_root.join("shared/scripts").exists());
     assert!(env.moldable_root.join("shared/skills").exists());
     assert!(env.moldable_root.join("shared/config").exists());
+}
+
+#[test]
+fn test_shared_scripts_directory() {
+    let env = TempMoldableEnv::new();
+    env.create_shared_dir();
+
+    let scripts_dir = env.moldable_root.join("shared/scripts");
+    assert!(scripts_dir.exists());
+
+    // Simulate installing a script
+    let test_script = scripts_dir.join("lint-moldable-app.js");
+    fs::write(&test_script, "// test script content").unwrap();
+    
+    assert!(test_script.exists());
+    let content = fs::read_to_string(&test_script).unwrap();
+    assert!(content.contains("test script content"));
 }
 
 // ==================== ENV VAR LAYERING TESTS ====================
@@ -1559,6 +1593,488 @@ fn test_empty_workspaces_array() {
     assert!(result.is_ok());
     let config = result.unwrap();
     assert!(config.workspaces.is_empty());
+}
+
+// ==================== APP REGISTRY TESTS ====================
+
+#[test]
+fn test_app_registry_entry_serialization() {
+    let entry = AppRegistryEntry {
+        id: "scribo".to_string(),
+        name: "Scribo".to_string(),
+        version: "0.1.0".to_string(),
+        description: Some("A translation journal app".to_string()),
+        icon: "✍️".to_string(),
+        icon_url: Some("https://example.com/icon.png".to_string()),
+        widget_size: "medium".to_string(),
+        category: Some("productivity".to_string()),
+        tags: Some(vec!["translation".to_string(), "language".to_string()]),
+        path: "scribo".to_string(),
+        required_env: Some(vec!["OPENAI_API_KEY".to_string()]),
+        moldable_dependencies: None,
+        commit: "abc123def456".to_string(),
+    };
+
+    let json = serde_json::to_string(&entry).unwrap();
+    let parsed: AppRegistryEntry = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(parsed.id, "scribo");
+    assert_eq!(parsed.version, "0.1.0");
+    assert_eq!(parsed.commit, "abc123def456");
+    assert_eq!(parsed.widget_size, "medium");
+}
+
+#[test]
+fn test_app_registry_entry_camel_case() {
+    let entry = AppRegistryEntry {
+        id: "test".to_string(),
+        name: "Test".to_string(),
+        version: "1.0.0".to_string(),
+        description: None,
+        icon: "📦".to_string(),
+        icon_url: None,
+        widget_size: "small".to_string(),
+        category: None,
+        tags: None,
+        path: "test".to_string(),
+        required_env: Some(vec!["API_KEY".to_string()]),
+        moldable_dependencies: None,
+        commit: "deadbeef".to_string(),
+    };
+
+    let json = serde_json::to_string(&entry).unwrap();
+
+    // Verify camelCase is used
+    assert!(json.contains("widgetSize"));
+    assert!(json.contains("iconUrl"));
+    assert!(json.contains("requiredEnv"));
+    assert!(json.contains("moldableDependencies"));
+    assert!(!json.contains("widget_size"));
+    assert!(!json.contains("icon_url"));
+}
+
+#[test]
+fn test_app_registry_entry_minimal() {
+    let json = r#"{
+        "id": "minimal-app",
+        "name": "Minimal App",
+        "version": "0.0.1",
+        "icon": "📦",
+        "widgetSize": "medium",
+        "path": "minimal-app",
+        "commit": "abc123"
+    }"#;
+
+    let entry: AppRegistryEntry = serde_json::from_str(json).unwrap();
+
+    assert_eq!(entry.id, "minimal-app");
+    assert!(entry.description.is_none());
+    assert!(entry.icon_url.is_none());
+    assert!(entry.category.is_none());
+    assert!(entry.tags.is_none());
+    assert!(entry.required_env.is_none());
+    assert!(entry.moldable_dependencies.is_none());
+}
+
+#[test]
+fn test_category_serialization() {
+    let category = Category {
+        id: "productivity".to_string(),
+        name: "Productivity".to_string(),
+        icon: "⚡".to_string(),
+    };
+
+    let json = serde_json::to_string(&category).unwrap();
+    let parsed: Category = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(parsed.id, "productivity");
+    assert_eq!(parsed.name, "Productivity");
+    assert_eq!(parsed.icon, "⚡");
+}
+
+#[test]
+fn test_app_registry_full() {
+    let registry = AppRegistry {
+        schema: Some("https://moldable.sh/schemas/manifest.json".to_string()),
+        version: "1".to_string(),
+        generated_at: Some("2026-01-14T10:00:00Z".to_string()),
+        registry: "moldable-ai/apps".to_string(),
+        apps: vec![
+            AppRegistryEntry {
+                id: "app1".to_string(),
+                name: "App 1".to_string(),
+                version: "1.0.0".to_string(),
+                description: Some("First app".to_string()),
+                icon: "1️⃣".to_string(),
+                icon_url: None,
+                widget_size: "small".to_string(),
+                category: Some("productivity".to_string()),
+                tags: None,
+                path: "app1".to_string(),
+                required_env: None,
+                moldable_dependencies: None,
+                commit: "commit1".to_string(),
+            },
+            AppRegistryEntry {
+                id: "app2".to_string(),
+                name: "App 2".to_string(),
+                version: "2.0.0".to_string(),
+                description: None,
+                icon: "2️⃣".to_string(),
+                icon_url: None,
+                widget_size: "large".to_string(),
+                category: Some("developer".to_string()),
+                tags: Some(vec!["dev".to_string()]),
+                path: "app2".to_string(),
+                required_env: Some(vec!["SECRET_KEY".to_string()]),
+                moldable_dependencies: None,
+                commit: "commit2".to_string(),
+            },
+        ],
+        categories: Some(vec![
+            Category {
+                id: "productivity".to_string(),
+                name: "Productivity".to_string(),
+                icon: "⚡".to_string(),
+            },
+            Category {
+                id: "developer".to_string(),
+                name: "Developer Tools".to_string(),
+                icon: "🛠️".to_string(),
+            },
+        ]),
+    };
+
+    let json = serde_json::to_string(&registry).unwrap();
+    let parsed: AppRegistry = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(parsed.version, "1");
+    assert_eq!(parsed.registry, "moldable-ai/apps");
+    assert_eq!(parsed.apps.len(), 2);
+    assert_eq!(parsed.categories.unwrap().len(), 2);
+}
+
+#[test]
+fn test_app_registry_camel_case() {
+    let registry = AppRegistry {
+        schema: Some("https://moldable.sh/schemas/manifest.json".to_string()),
+        version: "1".to_string(),
+        generated_at: Some("2026-01-14T10:00:00Z".to_string()),
+        registry: "moldable-ai/apps".to_string(),
+        apps: vec![],
+        categories: None,
+    };
+
+    let json = serde_json::to_string(&registry).unwrap();
+
+    // Verify $schema is preserved and generatedAt uses camelCase
+    assert!(json.contains("\"$schema\""));
+    assert!(json.contains("generatedAt"));
+    assert!(!json.contains("generated_at"));
+}
+
+#[test]
+fn test_app_registry_from_github_format() {
+    // This is the format returned by the GitHub manifest
+    let json = r#"{
+        "$schema": "https://moldable.sh/schemas/manifest.json",
+        "version": "1",
+        "generatedAt": "2026-01-15T04:20:46.412Z",
+        "registry": "moldable-ai/apps",
+        "apps": [
+            {
+                "id": "calendar",
+                "name": "Calendar",
+                "version": "0.1.0",
+                "description": "Integrated calendar with Google Calendar connection",
+                "icon": "🗓️",
+                "iconUrl": "https://raw.githubusercontent.com/moldable-ai/apps/main/calendar/public/icon.png",
+                "widgetSize": "medium",
+                "category": "productivity",
+                "tags": ["calendar", "schedule"],
+                "path": "calendar",
+                "requiredEnv": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+                "moldableDependencies": {},
+                "commit": "994b1cc123456789"
+            }
+        ],
+        "categories": [
+            {"id": "productivity", "name": "Productivity", "icon": "⚡"}
+        ]
+    }"#;
+
+    let registry: AppRegistry = serde_json::from_str(json).unwrap();
+
+    assert_eq!(registry.version, "1");
+    assert_eq!(registry.registry, "moldable-ai/apps");
+    assert_eq!(registry.apps.len(), 1);
+    assert_eq!(registry.apps[0].id, "calendar");
+    assert_eq!(registry.apps[0].commit, "994b1cc123456789");
+    assert_eq!(
+        registry.apps[0].required_env,
+        Some(vec![
+            "GOOGLE_CLIENT_ID".to_string(),
+            "GOOGLE_CLIENT_SECRET".to_string()
+        ])
+    );
+}
+
+#[test]
+fn test_app_registry_with_moldable_dependencies() {
+    let mut deps = std::collections::HashMap::new();
+    deps.insert("@moldable-ai/ui".to_string(), "^0.1.0".to_string());
+    deps.insert("@moldable-ai/storage".to_string(), "^0.1.0".to_string());
+
+    let entry = AppRegistryEntry {
+        id: "test".to_string(),
+        name: "Test".to_string(),
+        version: "1.0.0".to_string(),
+        description: None,
+        icon: "📦".to_string(),
+        icon_url: None,
+        widget_size: "medium".to_string(),
+        category: None,
+        tags: None,
+        path: "test".to_string(),
+        required_env: None,
+        moldable_dependencies: Some(deps),
+        commit: "abc123".to_string(),
+    };
+
+    let json = serde_json::to_string(&entry).unwrap();
+    let parsed: AppRegistryEntry = serde_json::from_str(&json).unwrap();
+
+    let parsed_deps = parsed.moldable_dependencies.unwrap();
+    assert_eq!(parsed_deps.get("@moldable-ai/ui"), Some(&"^0.1.0".to_string()));
+    assert_eq!(
+        parsed_deps.get("@moldable-ai/storage"),
+        Some(&"^0.1.0".to_string())
+    );
+}
+
+// ==================== SHARED APPS DIRECTORY TESTS ====================
+
+#[test]
+fn test_shared_apps_directory_structure() {
+    let env = TempMoldableEnv::new();
+
+    // Create shared apps directory
+    let shared_apps_dir = env.moldable_root.join("shared/apps");
+    fs::create_dir_all(&shared_apps_dir).unwrap();
+
+    // Simulate installing an app to shared location
+    let app_dir = shared_apps_dir.join("scribo");
+    fs::create_dir_all(&app_dir).unwrap();
+
+    // Create a moldable.json for the app
+    let manifest = serde_json::json!({
+        "name": "Scribo",
+        "icon": "✍️",
+        "version": "0.1.0",
+        "upstream": {
+            "repo": "moldable-ai/apps",
+            "path": "scribo",
+            "installedVersion": "0.1.0",
+            "installedCommit": "abc123",
+            "installedAt": "2026-01-14T10:00:00Z"
+        },
+        "modified": false
+    });
+    fs::write(
+        app_dir.join("moldable.json"),
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    // Verify structure
+    assert!(env.moldable_root.join("shared/apps/scribo").exists());
+    assert!(env
+        .moldable_root
+        .join("shared/apps/scribo/moldable.json")
+        .exists());
+}
+
+#[test]
+fn test_app_shared_across_workspaces() {
+    let env = TempMoldableEnv::new();
+
+    // Create shared app directory (app code lives here)
+    let shared_apps_dir = env.moldable_root.join("shared/apps");
+    fs::create_dir_all(shared_apps_dir.join("notes")).unwrap();
+
+    // Create two workspaces
+    env.create_workspace_dir("personal");
+    env.create_workspace_dir("work");
+
+    // Both workspaces register the same shared app
+    let app_registration = RegisteredApp {
+        id: "notes".to_string(),
+        name: "Notes".to_string(),
+        icon: "📝".to_string(),
+        icon_path: None,
+        port: 3001,
+        path: env
+            .moldable_root
+            .join("shared/apps/notes")
+            .to_string_lossy()
+            .to_string(),
+        command: "pnpm".to_string(),
+        args: vec!["dev".to_string()],
+        widget_size: "medium".to_string(),
+        requires_port: false,
+    };
+
+    // Register in personal workspace
+    let personal_config = MoldableConfig {
+        workspace: None,
+        apps: vec![app_registration.clone()],
+        preferences: serde_json::Map::new(),
+    };
+    env.create_workspace_config("personal", &personal_config);
+
+    // Register in work workspace (same app, same path)
+    let work_config = MoldableConfig {
+        workspace: None,
+        apps: vec![app_registration],
+        preferences: serde_json::Map::new(),
+    };
+    env.create_workspace_config("work", &work_config);
+
+    // Verify both workspaces have the app registered
+    let read_personal = env.read_workspace_config("personal");
+    let read_work = env.read_workspace_config("work");
+
+    assert_eq!(read_personal.apps.len(), 1);
+    assert_eq!(read_work.apps.len(), 1);
+
+    // Both point to the same shared path
+    assert_eq!(read_personal.apps[0].path, read_work.apps[0].path);
+    assert!(read_personal.apps[0].path.contains("shared/apps/notes"));
+}
+
+#[test]
+fn test_workspace_app_data_isolation() {
+    let env = TempMoldableEnv::new();
+
+    // Create workspace data directories for app-specific data
+    let personal_data = env
+        .moldable_root
+        .join("workspaces/personal/apps/notes/data");
+    let work_data = env.moldable_root.join("workspaces/work/apps/notes/data");
+
+    fs::create_dir_all(&personal_data).unwrap();
+    fs::create_dir_all(&work_data).unwrap();
+
+    // Write different data to each workspace
+    fs::write(personal_data.join("notes.db"), "personal data").unwrap();
+    fs::write(work_data.join("notes.db"), "work data").unwrap();
+
+    // Verify data is isolated
+    let personal_content = fs::read_to_string(personal_data.join("notes.db")).unwrap();
+    let work_content = fs::read_to_string(work_data.join("notes.db")).unwrap();
+
+    assert_eq!(personal_content, "personal data");
+    assert_eq!(work_content, "work data");
+    assert_ne!(personal_content, work_content);
+}
+
+#[test]
+fn test_check_app_registered_in_workspace() {
+    let env = TempMoldableEnv::new();
+    env.create_workspace_dir("personal");
+    env.create_workspace_dir("work");
+
+    // Register app only in personal workspace
+    let personal_config = MoldableConfig {
+        workspace: None,
+        apps: vec![RegisteredApp {
+            id: "scribo".to_string(),
+            name: "Scribo".to_string(),
+            icon: "✍️".to_string(),
+            icon_path: None,
+            port: 3001,
+            path: "/shared/apps/scribo".to_string(),
+            command: "pnpm".to_string(),
+            args: vec!["dev".to_string()],
+            widget_size: "medium".to_string(),
+            requires_port: false,
+        }],
+        preferences: serde_json::Map::new(),
+    };
+    env.create_workspace_config("personal", &personal_config);
+
+    // Work workspace has no apps
+    let work_config = MoldableConfig {
+        workspace: None,
+        apps: vec![],
+        preferences: serde_json::Map::new(),
+    };
+    env.create_workspace_config("work", &work_config);
+
+    // Check registrations
+    let read_personal = env.read_workspace_config("personal");
+    let read_work = env.read_workspace_config("work");
+
+    // App is registered in personal
+    assert!(read_personal.apps.iter().any(|a| a.id == "scribo"));
+
+    // App is NOT registered in work
+    assert!(!read_work.apps.iter().any(|a| a.id == "scribo"));
+}
+
+#[test]
+fn test_same_app_different_ports_per_workspace() {
+    // While app code is shared, each workspace can configure different ports
+    let env = TempMoldableEnv::new();
+    env.create_workspace_dir("personal");
+    env.create_workspace_dir("work");
+
+    let personal_config = MoldableConfig {
+        workspace: None,
+        apps: vec![RegisteredApp {
+            id: "notes".to_string(),
+            name: "Notes".to_string(),
+            icon: "📝".to_string(),
+            icon_path: None,
+            port: 3001, // Personal uses port 3001
+            path: "/shared/apps/notes".to_string(),
+            command: "pnpm".to_string(),
+            args: vec!["dev".to_string()],
+            widget_size: "medium".to_string(),
+            requires_port: false,
+        }],
+        preferences: serde_json::Map::new(),
+    };
+    env.create_workspace_config("personal", &personal_config);
+
+    let work_config = MoldableConfig {
+        workspace: None,
+        apps: vec![RegisteredApp {
+            id: "notes".to_string(),
+            name: "Notes".to_string(),
+            icon: "📝".to_string(),
+            icon_path: None,
+            port: 4001, // Work uses port 4001
+            path: "/shared/apps/notes".to_string(),
+            command: "pnpm".to_string(),
+            args: vec!["dev".to_string()],
+            widget_size: "large".to_string(), // Can also have different widget size
+            requires_port: false,
+        }],
+        preferences: serde_json::Map::new(),
+    };
+    env.create_workspace_config("work", &work_config);
+
+    let read_personal = env.read_workspace_config("personal");
+    let read_work = env.read_workspace_config("work");
+
+    // Same app ID, same path
+    assert_eq!(read_personal.apps[0].id, read_work.apps[0].id);
+    assert_eq!(read_personal.apps[0].path, read_work.apps[0].path);
+
+    // Different ports and widget sizes
+    assert_ne!(read_personal.apps[0].port, read_work.apps[0].port);
+    assert_ne!(read_personal.apps[0].widget_size, read_work.apps[0].widget_size);
 }
 
 // ==================== WORKSPACE ISOLATION TESTS ====================

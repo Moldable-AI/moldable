@@ -65,10 +65,19 @@ export function WidgetCard({ app, workspaceId, onClick }: WidgetCardProps) {
       >
         <div className="flex items-center gap-2">
           {app.iconPath ? (
-            <img src={app.iconPath} alt="" className="size-4 object-contain" />
-          ) : (
-            <span className="text-sm">{app.icon}</span>
-          )}
+            <img
+              src={app.iconPath}
+              alt=""
+              className="size-4 object-contain"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none'
+                e.currentTarget.nextElementSibling?.classList.remove('hidden')
+              }}
+            />
+          ) : null}
+          <span className={app.iconPath ? 'hidden text-sm' : 'text-sm'}>
+            {app.icon}
+          </span>
           <span className="text-muted-foreground text-xs font-medium">
             {app.name}
           </span>
@@ -121,10 +130,17 @@ export function WidgetCard({ app, workspaceId, onClick }: WidgetCardProps) {
                   src={app.iconPath}
                   alt={app.name}
                   className="size-12 object-contain"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none'
+                    e.currentTarget.nextElementSibling?.classList.remove(
+                      'hidden',
+                    )
+                  }}
                 />
-              ) : (
-                <div className="text-3xl">{app.icon}</div>
-              )}
+              ) : null}
+              <div className={app.iconPath ? 'hidden text-3xl' : 'text-3xl'}>
+                {app.icon}
+              </div>
             </div>
             <div className="mb-1 text-sm font-medium">{app.name}</div>
             {isStarting ? (

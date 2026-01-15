@@ -1,10 +1,22 @@
 {
   "name": "@moldable-ai/typescript-config",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.1.0",
+  "description": "Shared TypeScript configurations for Moldable applications",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/moldable-ai/moldable.git",
+    "directory": "packages/typescript-config"
+  },
   "exports": {
     "./base.json": "./base.json",
     "./nextjs.json": "./nextjs.json",
     "./react-library.json": "./react-library.json"
-  }
+  },
+  "files": [
+    "*.json"
+  ]
 }

@@ -148,14 +148,14 @@ When building user interfaces for Moldable apps:
 
 ### Use Existing Apps as Reference
 
-**IMPORTANT**: Before creating a new app, **always examine the existing apps** in the \`apps/\` directory as reference implementations:
+**IMPORTANT**: Before creating a new app, **always examine any existing installed apps** in \`~/.moldable/shared/apps/\` as reference implementations:
 
-- \`apps/notes\` — Simple CRUD app with markdown editing
-- \`apps/todo\` — Basic list management with checkboxes
-- \`apps/scribo\` — Translation journal with language selection
-- \`apps/meetings\` — Audio recording with real-time transcription
-- \`apps/calendar\` — Google Calendar integration with OAuth
-- \`apps/git-flow\` — Git operations with diff viewing
+- \`~/.moldable/shared/apps/notes\` — Simple CRUD app with markdown editing
+- \`~/.moldable/shared/apps/todo\` — Basic list management with checkboxes
+- \`~/.moldable/shared/apps/scribo\` — Translation journal with language selection
+- \`~/.moldable/shared/apps/meetings\` — Audio recording with real-time transcription
+- \`~/.moldable/shared/apps/calendar\` — Google Calendar integration with OAuth
+- \`~/.moldable/shared/apps/git-flow\` — Git operations with diff viewing
 
 **Study these apps for:**
 - **File structure** — How to organize components, hooks, API routes, and libs
@@ -172,8 +172,8 @@ When building a new app, **copy the structure from an existing similar app** and
 After creating or modifying a Moldable app, **always run the app linter** to verify it meets all requirements:
 
 \`\`\`bash
-pnpm lint:app apps/<app-name>   # Lint a single app
-pnpm lint:apps                   # Lint all apps
+node ~/.moldable/shared/scripts/lint-moldable-app.js ~/.moldable/shared/apps/<app-name>   # Lint a single app
+node ~/.moldable/shared/scripts/lint-moldable-app.js ~/.moldable/shared/apps/*            # Lint all apps
 \`\`\`
 
 This checks:
@@ -205,7 +205,7 @@ App registration object structure:
   "name": "App Name",
   "icon": "🚀",
   "port": 3005, // pick next available port (starting from 3001)
-  "path": "/absolute/path/to/app", // usually {workspace}/apps/{app-id}
+  "path": "/absolute/path/to/app", // e.g. ~/.moldable/shared/apps/{app-id}
   "command": "pnpm",
   "args": ["dev"],
   "widget_size": "medium", // small, medium, large

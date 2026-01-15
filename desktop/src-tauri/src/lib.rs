@@ -965,27 +965,89 @@ fn ensure_default_workspace() -> Result<(), String> {
     let workspaces_file = moldable_root.join("workspaces.json");
     let personal_workspace = moldable_root.join("workspaces/personal");
     let shared_dir = moldable_root.join("shared");
-    
+    let shared_apps_dir = moldable_root.join("shared/apps");
+    let shared_scripts_dir = moldable_root.join("shared/scripts");
+    let cache_dir = moldable_root.join("cache");
+
     // Skip if already set up
     if workspaces_file.exists() && personal_workspace.join("config.json").exists() {
+        // Still ensure shared/apps, shared/scripts, and cache exist (may be missing from older installs)
+        let _ = std::fs::create_dir_all(&shared_apps_dir);
+        let _ = std::fs::create_dir_all(&shared_scripts_dir);
+        let _ = std::fs::create_dir_all(&cache_dir);
         return Ok(());
     }
-    
+
     println!("🏠 Setting up default workspace structure...");
-    
+
     // Create directories
     std::fs::create_dir_all(&personal_workspace)
         .map_err(|e| format!("Failed to create personal workspace: {}", e))?;
     std::fs::create_dir_all(&shared_dir)
         .map_err(|e| format!("Failed to create shared directory: {}", e))?;
-    
+    std::fs::create_dir_all(&shared_apps_dir)
+        .map_err(|e| format!("Failed to create shared apps directory: {}", e))?;
+    std::fs::create_dir_all(&shared_scripts_dir)
+        .map_err(|e| format!("Failed to create shared scripts directory: {}", e))?;
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+
     // Create default workspaces.json
     save_workspaces_config(&WorkspacesConfig::default())?;
-    
+
     // Create default config.json in personal workspace
     ensure_workspace_dirs("personal")?;
-    
+
     println!("✅ Created default workspace structure");
+    Ok(())
+}
+
+/// Ensure bundled scripts are installed in ~/.moldable/shared/scripts/
+/// This copies scripts from the app bundle to the user's data directory
+fn ensure_bundled_scripts(app_handle: &tauri::AppHandle) -> Result<(), String> {
+    let home = std::env::var("HOME").map_err(|_| "Could not get HOME directory")?;
+    let scripts_dir = std::path::PathBuf::from(format!("{}/.moldable/shared/scripts", home));
+    
+    // Ensure scripts directory exists
+    std::fs::create_dir_all(&scripts_dir)
+        .map_err(|e| format!("Failed to create scripts directory: {}", e))?;
+    
+    // Scripts to install
+    let scripts = vec!["lint-moldable-app.js"];
+    
+    for script_name in scripts {
+        let dest_path = scripts_dir.join(script_name);
+        
+        // Try to get from bundled resources first
+        let resource_path = app_handle.path().resource_dir()
+            .map_err(|e| format!("Failed to get resource dir: {}", e))?
+            .join(script_name);
+        
+        if resource_path.exists() {
+            // Copy from bundled resources (production)
+            std::fs::copy(&resource_path, &dest_path)
+                .map_err(|e| format!("Failed to copy {}: {}", script_name, e))?;
+            println!("📜 Installed {} to ~/.moldable/shared/scripts/", script_name);
+        } else {
+            // In development, try to copy from the workspace scripts directory
+            // Get the workspace root by going up from src-tauri
+            if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+                let dev_script_path = std::path::PathBuf::from(&manifest_dir)
+                    .parent() // desktop
+                    .and_then(|p| p.parent()) // moldable root
+                    .map(|p| p.join("scripts").join(script_name));
+                
+                if let Some(dev_path) = dev_script_path {
+                    if dev_path.exists() {
+                        std::fs::copy(&dev_path, &dest_path)
+                            .map_err(|e| format!("Failed to copy {}: {}", script_name, e))?;
+                        println!("📜 Installed {} to ~/.moldable/shared/scripts/ (dev)", script_name);
+                    }
+                }
+            }
+        }
+    }
+    
     Ok(())
 }
 
@@ -1753,6 +1815,362 @@ fn install_available_app(path: String) -> Result<RegisteredApp, String> {
     Ok(detected)
 }
 
+// ==================== APP REGISTRY (GitHub) ====================
+
+/// Entry for an app in the remote registry manifest
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+struct AppRegistryEntry {
+    id: String,
+    name: String,
+    version: String,
+    description: Option<String>,
+    icon: String,
+    icon_url: Option<String>,
+    widget_size: String,
+    category: Option<String>,
+    tags: Option<Vec<String>>,
+    path: String,
+    required_env: Option<Vec<String>>,
+    moldable_dependencies: Option<std::collections::HashMap<String, String>>,
+    /// Commit SHA to install from
+    commit: String,
+}
+
+/// Category in the registry
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct Category {
+    id: String,
+    name: String,
+    icon: String,
+}
+
+/// The full app registry manifest from GitHub
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+struct AppRegistry {
+    #[serde(rename = "$schema")]
+    schema: Option<String>,
+    version: String,
+    generated_at: Option<String>,
+    registry: String,
+    apps: Vec<AppRegistryEntry>,
+    categories: Option<Vec<Category>>,
+}
+
+/// Get the shared apps directory path
+fn get_shared_apps_dir() -> Result<std::path::PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "Could not get HOME directory")?;
+    Ok(std::path::PathBuf::from(format!("{}/.moldable/shared/apps", home)))
+}
+
+/// Get the cache directory for registry manifest
+fn get_cache_dir() -> Result<std::path::PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "Could not get HOME directory")?;
+    Ok(std::path::PathBuf::from(format!("{}/.moldable/cache", home)))
+}
+
+/// Fetch the app registry manifest from GitHub (cached for 1 hour)
+#[tauri::command]
+async fn fetch_app_registry(force_refresh: Option<bool>) -> Result<AppRegistry, String> {
+    let cache_dir = get_cache_dir()?;
+    let cache_path = cache_dir.join("app-registry.json");
+    let force = force_refresh.unwrap_or(false);
+    
+    // Check cache first (valid for 1 hour) unless force refresh
+    if !force && cache_path.exists() {
+        if let Ok(metadata) = std::fs::metadata(&cache_path) {
+            if let Ok(modified) = metadata.modified() {
+                if let Ok(age) = std::time::SystemTime::now().duration_since(modified) {
+                    if age < std::time::Duration::from_secs(3600) {
+                        // Cache is fresh, use it
+                        if let Ok(content) = std::fs::read_to_string(&cache_path) {
+                            if let Ok(registry) = serde_json::from_str::<AppRegistry>(&content) {
+                                return Ok(registry);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Fetch from GitHub
+    let manifest_url = "https://raw.githubusercontent.com/moldable-ai/apps/main/manifest.json";
+    
+    let response = reqwest::get(manifest_url)
+        .await
+        .map_err(|e| format!("Failed to fetch registry: {}", e))?;
+    
+    if !response.status().is_success() {
+        return Err(format!("Failed to fetch registry: HTTP {}", response.status()));
+    }
+    
+    let registry: AppRegistry = response.json()
+        .await
+        .map_err(|e| format!("Failed to parse registry: {}", e))?;
+    
+    // Cache the result
+    if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+        eprintln!("Warning: Failed to create cache dir: {}", e);
+    } else if let Ok(content) = serde_json::to_string_pretty(&registry) {
+        if let Err(e) = std::fs::write(&cache_path, content) {
+            eprintln!("Warning: Failed to cache registry: {}", e);
+        }
+    }
+    
+    Ok(registry)
+}
+
+/// Install an app from the registry (download from GitHub)
+#[tauri::command]
+async fn install_app_from_registry(
+    app_id: String,
+    app_path: String,
+    commit: String,
+    version: String,
+) -> Result<RegisteredApp, String> {
+    use std::io::{Read, Write};
+
+    let shared_apps_dir = get_shared_apps_dir()?;
+    let app_dir = shared_apps_dir.join(&app_id);
+
+    // Check if already registered in the current workspace
+    let config_path = get_config_file_path()?;
+    let current_apps: Vec<RegisteredApp> = if config_path.exists() {
+        let content = std::fs::read_to_string(&config_path)
+            .map_err(|e| format!("Failed to read config: {}", e))?;
+        let config: MoldableConfig = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse config: {}", e))?;
+        config.apps
+    } else {
+        Vec::new()
+    };
+    
+    if current_apps.iter().any(|a| a.id == app_id) {
+        return Err(format!("App '{}' is already installed in this workspace", app_id));
+    }
+    
+    // If app code already exists in shared/apps (installed for another workspace),
+    // just register it in this workspace without re-downloading
+    if app_dir.exists() {
+        println!("📦 App '{}' already downloaded, registering in workspace...", app_id);
+        
+        let app_dir_str = app_dir.to_string_lossy().to_string();
+        let detected = detect_app_in_folder(app_dir_str)?
+            .ok_or_else(|| "Failed to detect app".to_string())?;
+        
+        register_app(detected.clone())?;
+        
+        println!("✅ Registered {} in workspace!", app_id);
+        
+        return Ok(detected);
+    }
+    
+    println!("📦 Installing {} from moldable-ai/apps...", app_id);
+    
+    // Download the repo archive for the specific commit
+    let archive_url = format!(
+        "https://github.com/moldable-ai/apps/archive/{}.zip",
+        commit
+    );
+    
+    println!("  Downloading from {}...", archive_url);
+    
+    let response = reqwest::get(&archive_url)
+        .await
+        .map_err(|e| format!("Failed to download: {}", e))?;
+    
+    if !response.status().is_success() {
+        return Err(format!("Failed to download: HTTP {}", response.status()));
+    }
+    
+    let bytes = response.bytes()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+    
+    println!("  Downloaded {} bytes, extracting...", bytes.len());
+    
+    // Create a temporary directory for extraction
+    let temp_dir = std::env::temp_dir().join(format!("moldable-app-{}", app_id));
+    if temp_dir.exists() {
+        std::fs::remove_dir_all(&temp_dir)
+            .map_err(|e| format!("Failed to clean temp dir: {}", e))?;
+    }
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| format!("Failed to create temp dir: {}", e))?;
+    
+    // Extract the zip
+    let cursor = std::io::Cursor::new(bytes.as_ref());
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|e| format!("Failed to open zip: {}", e))?;
+    
+    // The archive structure is: apps-{commit}/{app_path}/...
+    // We need to find the prefix that contains our app
+    let short_commit = if commit.len() > 7 { &commit[..7] } else { &commit };
+    let possible_prefixes = vec![
+        format!("apps-{}/{}/", commit, app_path),
+        format!("apps-{}/{}/", short_commit, app_path),
+        format!("moldable-apps-{}/{}/", commit, app_path),
+        format!("moldable-apps-{}/{}/", short_commit, app_path),
+    ];
+    
+    // Find which prefix is used in this archive
+    let mut actual_prefix: Option<String> = None;
+    for i in 0..archive.len() {
+        if let Ok(file) = archive.by_index(i) {
+            let name = file.name();
+            for prefix in &possible_prefixes {
+                if name.starts_with(prefix) {
+                    actual_prefix = Some(prefix.clone());
+                    break;
+                }
+            }
+            if actual_prefix.is_some() {
+                break;
+            }
+        }
+    }
+    
+    let prefix = actual_prefix.ok_or_else(|| {
+        format!("Could not find app '{}' in archive (tried prefixes: {:?})", app_path, possible_prefixes)
+    })?;
+    
+    println!("  Found app at prefix: {}", prefix);
+    
+    // Ensure the shared apps directory exists
+    std::fs::create_dir_all(&shared_apps_dir)
+        .map_err(|e| format!("Failed to create shared apps dir: {}", e))?;
+    
+    // Extract just the app folder
+    let mut extracted_count = 0;
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)
+            .map_err(|e| format!("Failed to read archive entry: {}", e))?;
+        
+        let file_name = file.name().to_string();
+        
+        if !file_name.starts_with(&prefix) {
+            continue;
+        }
+        
+        // Get the relative path within the app
+        let relative_path = &file_name[prefix.len()..];
+        if relative_path.is_empty() {
+            continue;
+        }
+        
+        let dest_path = app_dir.join(relative_path);
+        
+        if file.is_dir() {
+            std::fs::create_dir_all(&dest_path)
+                .map_err(|e| format!("Failed to create dir {:?}: {}", dest_path, e))?;
+        } else {
+            // Ensure parent directory exists
+            if let Some(parent) = dest_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create parent dir: {}", e))?;
+            }
+            
+            let mut content = Vec::new();
+            file.read_to_end(&mut content)
+                .map_err(|e| format!("Failed to read file: {}", e))?;
+            
+            let mut dest_file = std::fs::File::create(&dest_path)
+                .map_err(|e| format!("Failed to create file {:?}: {}", dest_path, e))?;
+            dest_file.write_all(&content)
+                .map_err(|e| format!("Failed to write file: {}", e))?;
+            
+            extracted_count += 1;
+        }
+    }
+    
+    println!("  Extracted {} files", extracted_count);
+    
+    // Clean up temp dir
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    
+    // Update moldable.json with upstream info
+    let moldable_json_path = app_dir.join("moldable.json");
+    if moldable_json_path.exists() {
+        let content = std::fs::read_to_string(&moldable_json_path)
+            .map_err(|e| format!("Failed to read moldable.json: {}", e))?;
+        
+        let mut manifest: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse moldable.json: {}", e))?;
+        
+        // Add upstream tracking info
+        manifest["upstream"] = serde_json::json!({
+            "repo": "moldable-ai/apps",
+            "path": app_path,
+            "installedVersion": version,
+            "installedCommit": commit,
+            "installedAt": chrono::Utc::now().to_rfc3339()
+        });
+        manifest["modified"] = serde_json::json!(false);
+        
+        let updated_content = serde_json::to_string_pretty(&manifest)
+            .map_err(|e| format!("Failed to serialize moldable.json: {}", e))?;
+        
+        std::fs::write(&moldable_json_path, updated_content)
+            .map_err(|e| format!("Failed to write moldable.json: {}", e))?;
+    }
+    
+    println!("  Running pnpm install...");
+    
+    // Run pnpm install
+    let pnpm_path = find_pnpm_path();
+    let install_output = std::process::Command::new(&pnpm_path)
+        .arg("install")
+        .current_dir(&app_dir)
+        .output()
+        .map_err(|e| format!("Failed to run pnpm install: {}", e))?;
+    
+    if !install_output.status.success() {
+        let stderr = String::from_utf8_lossy(&install_output.stderr);
+        eprintln!("pnpm install stderr: {}", stderr);
+        // Don't fail - the app might still work or user can fix it
+        println!("  Warning: pnpm install had issues, but continuing...");
+    } else {
+        println!("  pnpm install completed");
+    }
+    
+    // Detect and register the app
+    let app_dir_str = app_dir.to_string_lossy().to_string();
+    let detected = detect_app_in_folder(app_dir_str.clone())?
+        .ok_or_else(|| "Failed to detect installed app".to_string())?;
+    
+    register_app(detected.clone())?;
+    
+    println!("✅ Installed {} successfully!", app_id);
+    
+    Ok(detected)
+}
+
+/// Uninstall an app from the shared directory
+#[tauri::command]
+fn uninstall_app_from_shared(app_id: String) -> Result<(), String> {
+    let shared_apps_dir = get_shared_apps_dir()?;
+    let app_dir = shared_apps_dir.join(&app_id);
+    
+    if !app_dir.exists() {
+        return Err(format!("App '{}' is not installed in shared directory", app_id));
+    }
+    
+    // First unregister from config
+    let _ = unregister_app(app_id.clone());
+    
+    // Then remove the directory
+    std::fs::remove_dir_all(&app_dir)
+        .map_err(|e| format!("Failed to remove app directory: {}", e))?;
+    
+    println!("🗑️  Uninstalled {} from shared apps", app_id);
+    
+    Ok(())
+}
+
+// ==================== END APP REGISTRY ====================
+
 #[tauri::command]
 fn get_workspace_path() -> Result<Option<String>, String> {
     let config_path = get_config_file_path()?;
@@ -2273,6 +2691,10 @@ pub fn run() {
             set_workspace_path,
             list_available_apps,
             install_available_app,
+            // App registry commands (GitHub)
+            fetch_app_registry,
+            install_app_from_registry,
+            uninstall_app_from_shared,
             get_app_env_requirements,
             set_app_env_var,
             get_all_env_vars,
@@ -2307,6 +2729,11 @@ pub fn run() {
             // Ensure default workspace exists on fresh install
             if let Err(e) = ensure_default_workspace() {
                 eprintln!("⚠️  Failed to create default workspace: {}", e);
+            }
+            
+            // Install bundled scripts to ~/.moldable/shared/scripts/
+            if let Err(e) = ensure_bundled_scripts(app.handle()) {
+                eprintln!("⚠️  Failed to install bundled scripts: {}", e);
             }
             
             // Start AI server sidecar

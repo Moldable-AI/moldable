@@ -1,10 +1,25 @@
 {
   "name": "@moldable-ai/prettier-config",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.1.0",
+  "description": "Shared Prettier configuration for Moldable applications",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/moldable-ai/moldable.git",
+    "directory": "packages/prettier-config"
+  },
   "main": "index.js",
+  "files": [
+    "index.js"
+  ],
   "dependencies": {
     "@trivago/prettier-plugin-sort-imports": "5.2.2",
     "prettier-plugin-tailwindcss": "0.6.12"
+  },
+  "peerDependencies": {
+    "prettier": "^3.0.0"
   }
 }

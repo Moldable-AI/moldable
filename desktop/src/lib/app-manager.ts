@@ -219,7 +219,7 @@ export async function removeApp(appId: string): Promise<void> {
   await invoke<RegisteredApp[]>('unregister_app', { appId })
 }
 
-// Available app info for installation
+// Available app info for installation (local workspace apps)
 export interface AvailableApp {
   id: string
   name: string
@@ -280,6 +280,88 @@ export async function installAvailableApp(path: string): Promise<AppConfig> {
 
   const app = await invoke<RegisteredApp>('install_available_app', { path })
   return toAppConfig(app)
+}
+
+// ==================== App Registry (GitHub) ====================
+
+// Entry for an app in the remote registry manifest
+export interface AppRegistryEntry {
+  id: string
+  name: string
+  version: string
+  description?: string
+  icon: string
+  iconUrl?: string
+  widgetSize: string
+  category?: string
+  tags?: string[]
+  path: string
+  requiredEnv?: string[]
+  moldableDependencies?: Record<string, string>
+  /** Commit SHA to install from */
+  commit: string
+}
+
+// Category in the registry
+export interface Category {
+  id: string
+  name: string
+  icon: string
+}
+
+// The full app registry manifest from GitHub
+export interface AppRegistry {
+  version: string
+  generatedAt?: string
+  registry: string
+  apps: AppRegistryEntry[]
+  categories?: Category[]
+}
+
+// Fetch the app registry from GitHub (cached for 1 hour)
+export async function fetchAppRegistry(
+  forceRefresh = false,
+): Promise<AppRegistry> {
+  if (!isTauri()) {
+    // Return empty registry for non-Tauri env
+    return {
+      version: '1',
+      registry: 'moldable-ai/apps',
+      apps: [],
+      categories: [],
+    }
+  }
+
+  return invoke<AppRegistry>('fetch_app_registry', { forceRefresh })
+}
+
+// Install an app from the registry (downloads from GitHub)
+export async function installAppFromRegistry(
+  appId: string,
+  appPath: string,
+  commit: string,
+  version: string,
+): Promise<AppConfig> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri')
+  }
+
+  const app = await invoke<RegisteredApp>('install_app_from_registry', {
+    appId,
+    appPath,
+    commit,
+    version,
+  })
+  return toAppConfig(app)
+}
+
+// Uninstall an app from the shared directory
+export async function uninstallAppFromShared(appId: string): Promise<void> {
+  if (!isTauri()) {
+    return
+  }
+
+  await invoke('uninstall_app_from_shared', { appId })
 }
 
 // Get the configured workspace path
