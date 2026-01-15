@@ -2,6 +2,8 @@
 
 Your personal operating system for software that doesn't exist yet.
 
+![Moldable AI](https://moldable.sh/hero.png)
+
 ## What is Moldable?
 
 Moldable is for people who refuse to settle for software built for everyone else.
