@@ -1,0 +1,135 @@
+name: Release Desktop
+
+on:
+  push:
+    tags:
+      - 'desktop-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.2.0)'
+        required: true
+        type: string
+      draft:
+        description: 'Create as draft release'
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create_release.outputs.id }}
+      version: ${{ steps.get_version.outputs.version }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version from tag or input
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            # Extract version from tag (desktop-v0.1.0 -> 0.1.0)
+            echo "version=${GITHUB_REF_NAME#desktop-v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-v${{ steps.get_version.outputs.version }}
+          name: Moldable v${{ steps.get_version.outputs.version }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
+          prerelease: false
+          generate_release_notes: true
+
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            name: Apple Silicon
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            name: Intel Mac
+          # Uncomment when ready for other platforms:
+          # - platform: ubuntu-22.04
+          #   target: x86_64-unknown-linux-gnu
+          #   name: Linux
+          # - platform: windows-latest
+          #   target: x86_64-pc-windows-msvc
+          #   name: Windows
+
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install dependencies (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install pnpm dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build:packages
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Uncomment for code signing:
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: desktop
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: --target ${{ matrix.target }}
+
+  publish-release:
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.draft }}
+        with:
+          tag_name: desktop-v${{ needs.create-release.outputs.version }}
+          draft: false
