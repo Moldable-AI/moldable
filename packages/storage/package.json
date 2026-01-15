@@ -1,6 +1,6 @@
 {
   "name": "@moldable-ai/storage",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Filesystem-first storage utilities for Moldable applications",
   "author": "Desiderata LLC",
   "license": "Elastic-2.0",
