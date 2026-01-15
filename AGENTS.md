@@ -26,6 +26,12 @@ Moldable uses a **workspace-based** structure where data is isolated per workspa
 │
 ├── shared/                          # Shared across ALL workspaces
 │   ├── .env                         # Base environment variables (API keys)
+│   ├── apps/                        # App source code (shared across workspaces)
+│   │   ├── scribo/                  # Installed app source
+│   │   │   ├── moldable.json
+│   │   │   ├── package.json
+│   │   │   └── src/
+│   │   └── meetings/
 │   ├── skills/                      # Skills library (instruction & executable)
 │   │   └── {repo-name}/             # Skills grouped by source repo
 │   │       └── {skill-name}/        # Individual skill (SKILL.md or bin/)
@@ -34,11 +40,11 @@ Moldable uses a **workspace-based** structure where data is isolated per workspa
 │
 └── workspaces/                      # Per-workspace isolated data
     └── {workspace-id}/              # e.g., "personal", "work"
-        ├── config.json              # Apps, preferences, installed skills
+        ├── config.json              # Apps enabled, preferences
         ├── .env                     # Workspace-specific env overrides
-        ├── apps/                    # App data directories
-        │   └── {app-id}/
-        │       └── data/            # App runtime data (SQLite, files)
+        ├── apps/                    # App runtime data (workspace-scoped)
+        │   ├── {app-id}/            # E.g. data for this app in this workspace
+        │   │   └── data/            # App runtime data (SQLite, files, etc.)
         ├── conversations/           # Chat history
         └── config/
             ├── mcp.json             # Workspace-specific MCPs
@@ -61,6 +67,7 @@ Moldable uses a **workspace-based** structure where data is isolated per workspa
 Workspaces allow isolating data between contexts (Personal, Work, Side Project, etc.):
 
 - **Instant switching**: All apps from all workspaces run simultaneously
+- **Shared apps**: App code is installed once in `shared/apps/`, data is per-workspace
 - **Shared skills**: Skills are installed once, enabled per-workspace
 - **Layered .env**: `shared/.env` provides base values, workspace `.env` overrides
 

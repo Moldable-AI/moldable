@@ -4,6 +4,19 @@
 
 ---
 
+## Progress Tracking
+
+| Phase       | Status     | Description                                                     |
+| ----------- | ---------- | --------------------------------------------------------------- |
+| **Phase 1** | ⏳ Pending | Update Rust backend for shared apps + workspace data structure  |
+| **Phase 2** | ✅ Done    | npm packages published (`@moldable-ai/ui`, `editor`, `storage`) |
+| **Phase 3** | ✅ Done    | Apps repo created (`moldable-ai/apps` with `manifest.json`)     |
+| **Phase 4** | ⏳ Pending | Desktop auto-update system (Tauri updater plugin)               |
+| **Phase 5** | ⏳ Pending | App installation from registry (Browse Apps UI)                 |
+| **Phase 6** | ⏳ Pending | App update system (upstream tracking, merge UI)                 |
+
+---
+
 ## Executive Summary
 
 Moldable has three distinct distribution concerns:
@@ -831,39 +844,53 @@ git push
 
 ### 3.1 App Source Code Location
 
-**Key design decision:** App source code lives inside `~/.moldable/workspaces/{workspace}/apps/{app}/code/`, making apps:
+**Key design decision:** App source code is **shared** across all workspaces, while app data is **workspace-scoped**:
 
-- Workspace-aware (different apps per workspace)
-- Self-contained (code + data in same parent folder)
-- Work out of the box (no separate workspace config needed)
+- **Code** lives in `~/.moldable/shared/apps/{app}/` — installed once, used by all workspaces
+- **Data** lives in `~/.moldable/workspaces/{ws}/apps/{app}/` — isolated per workspace
+
+This means:
+
+- Installing an app once makes it available to all workspaces
+- Each workspace has its own isolated data for each app
+- Updating an app updates it for all workspaces at once
 
 ```
 ~/.moldable/
 ├── workspaces.json
 ├── shared/
-│   └── .env                           # API keys
+│   ├── .env                           # API keys
+│   └── apps/                          # SHARED app source code
+│       ├── scribo/
+│       │   ├── moldable.json
+│       │   ├── package.json
+│       │   ├── node_modules/
+│       │   └── src/
+│       ├── meetings/
+│       │   └── ...
+│       └── todo/
+│           └── ...
+│
 └── workspaces/
-    └── personal/
-        ├── config.json                # App registry, preferences
-        ├── conversations/
-        └── apps/
+    ├── personal/
+    │   ├── config.json                # Which apps are enabled, preferences
+    │   ├── conversations/
+    │   └── apps/                      # WORKSPACE-SCOPED app data
+    │       ├── scribo/
+    │       │   └── entries.db
+    │       ├── meetings/
+    │       │   ├── meetings.db
+    │       │   └── recordings/
+    │       └── todo/
+    │           └── todos.db
+    │
+    └── work/
+        ├── config.json
+        └── apps/                      # Separate data for work workspace
             ├── scribo/
-            │   ├── code/              # Source code (Next.js app)
-            │   │   ├── moldable.json
-            │   │   ├── package.json
-            │   │   ├── node_modules/
-            │   │   └── src/
-            │   └── data/              # Runtime data (SQLite, files)
-            │       └── entries.db
-            ├── meetings/
-            │   ├── code/
-            │   │   └── ...
-            │   └── data/
-            │       ├── meetings.db
-            │       └── recordings/
-            └── todo/
-                ├── code/
-                └── data/
+            │   └── entries.db         # Different entries than personal
+            └── meetings/
+                └── meetings.db        # Different meetings than personal
 ```
 
 ### 3.2 GitHub Repository Structure
@@ -890,8 +917,10 @@ GitHub:
     └── notes/
 ```
 
-When a user installs an app, it gets cloned/downloaded to:
-`~/.moldable/workspaces/{active-workspace}/apps/{app-id}/code/`
+When a user installs an app, code goes to shared, data directories are created per-workspace:
+
+- **Code:** `~/.moldable/shared/apps/{app-id}/`
+- **Data:** `~/.moldable/workspaces/{workspace}/apps/{app-id}/data/` (created on first run per workspace)
 
 ### 3.3 App Package.json Changes
 
@@ -1231,25 +1260,32 @@ console.log(`Generated manifest with ${apps.length} apps`)
 
 **Installation steps:**
 
-1. **Fetch manifest** from `moldable/apps` (cached)
+1. **Fetch manifest** from `moldable-ai/apps` (cached)
 2. **Download app archive** for specific commit
-3. **Extract to** `~/.moldable/workspaces/{active}/apps/{app-id}/code/`
-4. **Create** `~/.moldable/workspaces/{active}/apps/{app-id}/data/`
-5. **Update moldable.json** with `upstream` installation state
-6. **Run** `pnpm install` in code directory
-7. **Register** in workspace `config.json`
+3. **Extract to** `~/.moldable/shared/apps/{app-id}/` (shared location)
+4. **Update moldable.json** with `upstream` installation state
+5. **Run** `pnpm install` in code directory
+6. **Register** app as available
+7. **Create data dir** `~/.moldable/workspaces/{active}/apps/{app-id}/data/` on first run
 8. **Start app** and show in canvas
 
 **Resulting structure:**
 
 ```
-~/.moldable/workspaces/personal/apps/scribo/
-├── code/                    # Downloaded source
-│   ├── moldable.json        # Updated with upstream info
-│   ├── package.json
-│   ├── node_modules/        # After pnpm install
-│   └── src/
-└── data/                    # Created empty, app writes here
+~/.moldable/
+├── shared/
+│   └── apps/
+│       └── scribo/              # Downloaded source (shared)
+│           ├── moldable.json    # Updated with upstream info
+│           ├── package.json
+│           ├── node_modules/    # After pnpm install
+│           └── src/
+│
+└── workspaces/
+    └── personal/
+        └── apps/
+            └── scribo/          # App data (workspace-scoped)
+                └── (created on first run)
 ```
 
 **Implementation:**
@@ -1268,21 +1304,17 @@ interface AppManifestEntry {
   requiredEnv: string[]
 }
 
-async function installApp(app: AppManifestEntry, workspaceId: string) {
-  const appDir = `~/.moldable/workspaces/${workspaceId}/apps/${app.id}`
-  const codeDir = `${appDir}/code`
-  const dataDir = `${appDir}/data`
+async function installApp(app: AppManifestEntry) {
+  // Code is shared across all workspaces
+  const codeDir = `~/.moldable/shared/apps/${app.id}`
 
-  // 1. Download and extract
-  await downloadAppFromGitHub('moldable/apps', app.path, app.commit, codeDir)
+  // 1. Download and extract to shared location
+  await downloadAppFromGitHub('moldable-ai/apps', app.path, app.commit, codeDir)
 
-  // 2. Create data directory
-  await fs.mkdir(dataDir, { recursive: true })
-
-  // 3. Update moldable.json with upstream info
+  // 2. Update moldable.json with upstream info
   const moldableJson = await readJson(`${codeDir}/moldable.json`)
   moldableJson.upstream = {
-    repo: 'moldable/apps',
+    repo: 'moldable-ai/apps',
     path: app.path,
     installedVersion: app.version,
     installedCommit: app.commit,
@@ -1291,17 +1323,22 @@ async function installApp(app: AppManifestEntry, workspaceId: string) {
   moldableJson.modified = false
   await writeJson(`${codeDir}/moldable.json`, moldableJson)
 
-  // 4. Install dependencies
+  // 3. Install dependencies
   await exec('pnpm install', { cwd: codeDir })
 
-  // 5. Register in config
-  await registerApp({
+  // 4. Register app as available (not workspace-specific)
+  await registerSharedApp({
     id: app.id,
     name: app.name,
     icon: app.icon,
     path: codeDir,
     // ... other fields
   })
+}
+
+// Data directory is created per-workspace on first app run
+function getAppDataDir(appId: string, workspaceId: string): string {
+  return `~/.moldable/workspaces/${workspaceId}/apps/${appId}/data`
 }
 
 async function downloadAppFromGitHub(
@@ -2096,12 +2133,13 @@ Create a manifest file that the desktop can fetch to know about available apps:
 
 ### Phase 1: Update Directory Structure
 
-1. **Update Rust backend** to use new `code/` + `data/` structure
-   - Modify `RegisteredApp.path` to point to `code/` directory
-   - Update `list_available_apps()` to scan `{app}/code/moldable.json`
-   - Update `start_app_internal()` to pass correct `MOLDABLE_APP_DATA_DIR`
-   - Update `detect_app_in_folder()` to handle both structures
-2. **Migrate existing installed apps** (if any) to new structure
+1. **Update Rust backend** to use shared apps + workspace data structure
+   - App code: `~/.moldable/shared/apps/{app}/`
+   - App data: `~/.moldable/workspaces/{ws}/apps/{app}/`
+   - Update `list_available_apps()` to scan shared apps directory
+   - Update `start_app_internal()` to pass correct `MOLDABLE_APP_DATA_DIR` per workspace
+   - Update `detect_app_in_folder()` to handle new structure
+2. **Migrate existing installed apps** (if any) to shared location
 3. **Update AGENTS.md** to document new structure for agent
 
 ### Phase 2: Prepare Packages for npm
@@ -2129,11 +2167,11 @@ Create a manifest file that the desktop can fetch to know about available apps:
 
 ### Phase 5: App Installation System
 
-1. Implement app download/clone to `workspaces/{ws}/apps/{app}/code/`
-2. Auto-create `data/` directory on install
-3. Run `pnpm install` in code directory
+1. Implement app download/clone to `shared/apps/{app}/`
+2. Run `pnpm install` in code directory
+3. Auto-create `workspaces/{ws}/apps/{app}/` data dir on first run per workspace
 4. Add "Browse Apps" UI in desktop
-5. Connect to `moldable/apps` repo for available apps
+5. Connect to `moldable-ai/apps` repo for available apps
 
 ### Phase 6: App Update System
 
@@ -2280,10 +2318,10 @@ When supporting third-party apps:
 | ------------------------- | ---------------------------------------------- | ------------------------------- |
 | Desktop app               | Standalone `.app`                              | Distributed via GitHub Releases |
 | `@moldable-ai/*` packages | npm                                            | Published separately            |
-| App source code           | `~/.moldable/workspaces/{ws}/apps/{app}/code/` | Workspace-aware                 |
-| App runtime data          | `~/.moldable/workspaces/{ws}/apps/{app}/data/` | Gitignored                      |
-| Official apps repo        | `moldable/apps` on GitHub                      | Source for installation         |
-| Upstream tracking         | `moldable.json` in code/                       | For update detection            |
+| App source code           | `~/.moldable/shared/apps/{app}/`               | Shared across workspaces        |
+| App runtime data          | `~/.moldable/workspaces/{ws}/apps/{app}/data/` | Workspace-scoped, gitignored    |
+| Official apps repo        | `moldable-ai/apps` on GitHub                   | Source for installation         |
+| Upstream tracking         | `moldable.json` in shared app dir              | For update detection            |
 
 ---
 
