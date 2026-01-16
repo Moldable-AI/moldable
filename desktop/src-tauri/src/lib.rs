@@ -4,9 +4,11 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use log::{info, warn, error};
 use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandChild;
 
@@ -657,7 +659,7 @@ fn cleanup_orphaned_instances(working_dir: &str) -> usize {
             .unwrap_or(false);
         
         if is_running {
-            println!("  🔪 Killing orphaned process {} (port {:?})", instance.pid, instance.port);
+            info!("Killing orphaned process {} (port {:?})", instance.pid, instance.port);
             kill_process_tree(instance.pid);
             killed += 1;
         }
@@ -683,21 +685,21 @@ fn cleanup_all_orphaned_apps() {
         return;
     }
     
-    println!("🧹 Checking for orphaned app instances...");
+    info!("Checking for orphaned app instances...");
     let mut total_killed = 0;
     
     for app in &apps {
         let killed = cleanup_orphaned_instances(&app.path);
         if killed > 0 {
-            println!("  ✅ Cleaned up {} orphaned instance(s) for {}", killed, app.id);
+            info!("Cleaned up {} orphaned instance(s) for {}", killed, app.id);
             total_killed += killed;
         }
     }
     
     if total_killed > 0 {
-        println!("🧹 Cleaned up {} total orphaned process(es)", total_killed);
+        info!("Cleaned up {} total orphaned process(es)", total_killed);
     } else {
-        println!("✨ No orphaned processes found");
+        info!("No orphaned processes found");
     }
 }
 
@@ -1003,7 +1005,7 @@ fn ensure_default_workspace() -> Result<(), String> {
         return Ok(());
     }
 
-    println!("🏠 Setting up default workspace structure...");
+    info!("Setting up default workspace structure...");
 
     // Create directories
     std::fs::create_dir_all(&personal_workspace)
@@ -1023,7 +1025,7 @@ fn ensure_default_workspace() -> Result<(), String> {
     // Create default config.json in personal workspace
     ensure_workspace_dirs("personal")?;
 
-    println!("✅ Created default workspace structure");
+    info!("Created default workspace structure");
     Ok(())
 }
 
@@ -1052,7 +1054,7 @@ fn ensure_bundled_scripts(app_handle: &tauri::AppHandle) -> Result<(), String> {
             // Copy from bundled resources (production)
             std::fs::copy(&resource_path, &dest_path)
                 .map_err(|e| format!("Failed to copy {}: {}", script_name, e))?;
-            println!("📜 Installed {} to ~/.moldable/shared/scripts/", script_name);
+            info!("Installed {} to ~/.moldable/shared/scripts/", script_name);
         } else {
             // In development, try to copy from the workspace scripts directory
             // Get the workspace root by going up from src-tauri
@@ -1066,7 +1068,7 @@ fn ensure_bundled_scripts(app_handle: &tauri::AppHandle) -> Result<(), String> {
                     if dev_path.exists() {
                         std::fs::copy(&dev_path, &dest_path)
                             .map_err(|e| format!("Failed to copy {}: {}", script_name, e))?;
-                        println!("📜 Installed {} to ~/.moldable/shared/scripts/ (dev)", script_name);
+                        info!("Installed {} to ~/.moldable/shared/scripts/ (dev)", script_name);
                     }
                 }
             }
@@ -1085,7 +1087,7 @@ async fn ensure_hello_moldables_app_async(app_handle: tauri::AppHandle) -> Resul
         return Ok(());
     }
     
-    println!("👋 Installing Hello Moldables tutorial app from GitHub...");
+    info!("Installing Hello Moldables tutorial app from GitHub...");
     
     // Fetch the app registry to get the hello-moldables app info
     let registry = fetch_app_registry(Some(false)).await?;
@@ -1104,14 +1106,14 @@ async fn ensure_hello_moldables_app_async(app_handle: tauri::AppHandle) -> Resul
         hello_app.version.clone(),
     ).await {
         Ok(_) => {
-            println!("✅ Hello Moldables app installed!");
+            info!("Hello Moldables app installed!");
         }
         Err(e) => {
             // Don't fail if already installed in workspace
             if !e.contains("already installed") {
                 return Err(e);
             }
-            println!("  Hello Moldables already installed in workspace");
+            info!("Hello Moldables already installed in workspace");
         }
     }
     
@@ -1137,7 +1139,7 @@ fn ensure_hello_moldables_app(app_handle: &tauri::AppHandle) {
     // This runs in the background so it doesn't block app startup
     tauri::async_runtime::spawn(async move {
         if let Err(e) = ensure_hello_moldables_app_async(handle).await {
-            eprintln!("⚠️  Failed to install Hello Moldables app: {}", e);
+            warn!("Failed to install Hello Moldables app: {}", e);
         }
     });
 }
@@ -1241,7 +1243,7 @@ fn register_app(app_handle: tauri::AppHandle, app: RegisteredApp) -> Result<Vec<
     // Emit config-changed event to notify frontend immediately
     // (file watcher has 500ms debounce which can cause delays)
     if let Err(e) = app_handle.emit("config-changed", ()) {
-        eprintln!("Failed to emit config-changed event: {}", e);
+        error!("Failed to emit config-changed event: {}", e);
     }
     
     get_registered_apps()
@@ -1270,7 +1272,7 @@ fn unregister_app(app_handle: tauri::AppHandle, app_id: String) -> Result<Vec<Re
     
     // Emit config-changed event to notify frontend immediately
     if let Err(e) = app_handle.emit("config-changed", ()) {
-        eprintln!("Failed to emit config-changed event: {}", e);
+        error!("Failed to emit config-changed event: {}", e);
     }
     
     get_registered_apps()
@@ -1491,7 +1493,7 @@ fn ensure_pnpm_installed() -> Result<String, String> {
         return Ok(pnpm_path);
     }
     
-    println!("📦 pnpm not found, attempting to install via npm...");
+    info!("pnpm not found, attempting to install via npm...");
     
     // Try npm install -g pnpm
     if let Some(npm_path) = find_npm_path() {
@@ -1501,7 +1503,7 @@ fn ensure_pnpm_installed() -> Result<String, String> {
         
         if let Ok(output) = output {
             if output.status.success() {
-                println!("  ✅ pnpm installed successfully");
+                info!("pnpm installed successfully");
                 // Check if pnpm is now available
                 if let Some(pnpm_path) = find_pnpm_path() {
                     return Ok(pnpm_path);
@@ -2168,10 +2170,10 @@ async fn fetch_app_registry(force_refresh: Option<bool>) -> Result<AppRegistry, 
     
     // Cache the result
     if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-        eprintln!("Warning: Failed to create cache dir: {}", e);
+        warn!("Failed to create cache dir: {}", e);
     } else if let Ok(content) = serde_json::to_string_pretty(&registry) {
         if let Err(e) = std::fs::write(&cache_path, content) {
-            eprintln!("Warning: Failed to cache registry: {}", e);
+            warn!("Failed to cache registry: {}", e);
         }
     }
     
@@ -2211,12 +2213,12 @@ async fn install_app_from_registry(
     // If app code already exists in shared/apps (installed for another workspace),
     // just register it in this workspace without re-downloading
     if app_dir.exists() {
-        println!("📦 App '{}' already downloaded, registering in workspace...", app_id);
+        info!("App '{}' already downloaded, registering in workspace...", app_id);
         
         // Check if node_modules exists - if not, run pnpm install
         let node_modules_path = app_dir.join("node_modules");
         if !node_modules_path.exists() {
-            println!("  node_modules missing, running pnpm install...");
+            info!("node_modules missing, running pnpm install...");
             
             let pnpm_path = ensure_pnpm_installed()?;
             let install_output = std::process::Command::new(&pnpm_path)
@@ -2227,10 +2229,9 @@ async fn install_app_from_registry(
             
             if !install_output.status.success() {
                 let stderr = String::from_utf8_lossy(&install_output.stderr);
-                eprintln!("pnpm install stderr: {}", stderr);
-                println!("  Warning: pnpm install had issues, but continuing...");
+                warn!("pnpm install had issues (stderr: {}), but continuing...", stderr);
             } else {
-                println!("  pnpm install completed");
+                info!("pnpm install completed");
             }
         }
         
@@ -2240,12 +2241,12 @@ async fn install_app_from_registry(
         
         register_app(app_handle.clone(), detected.clone())?;
         
-        println!("✅ Registered {} in workspace!", app_id);
+        info!("Registered {} in workspace!", app_id);
         
         return Ok(detected);
     }
     
-    println!("📦 Installing {} from moldable-ai/apps...", app_id);
+    info!("Installing {} from moldable-ai/apps...", app_id);
     
     // Download the repo archive for the specific commit
     let archive_url = format!(
@@ -2253,7 +2254,7 @@ async fn install_app_from_registry(
         commit
     );
     
-    println!("  Downloading from {}...", archive_url);
+    info!("Downloading from {}...", archive_url);
     
     let response = reqwest::get(&archive_url)
         .await
@@ -2267,7 +2268,7 @@ async fn install_app_from_registry(
         .await
         .map_err(|e| format!("Failed to read response: {}", e))?;
     
-    println!("  Downloaded {} bytes, extracting...", bytes.len());
+    info!("Downloaded {} bytes, extracting...", bytes.len());
     
     // Create a temporary directory for extraction
     let temp_dir = std::env::temp_dir().join(format!("moldable-app-{}", app_id));
@@ -2314,7 +2315,7 @@ async fn install_app_from_registry(
         format!("Could not find app '{}' in archive (tried prefixes: {:?})", app_path, possible_prefixes)
     })?;
     
-    println!("  Found app at prefix: {}", prefix);
+    info!("Found app at prefix: {}", prefix);
     
     // Ensure the shared apps directory exists
     std::fs::create_dir_all(&shared_apps_dir)
@@ -2363,7 +2364,7 @@ async fn install_app_from_registry(
         }
     }
     
-    println!("  Extracted {} files", extracted_count);
+    info!("Extracted {} files", extracted_count);
     
     // Clean up temp dir
     let _ = std::fs::remove_dir_all(&temp_dir);
@@ -2394,7 +2395,7 @@ async fn install_app_from_registry(
             .map_err(|e| format!("Failed to write moldable.json: {}", e))?;
     }
     
-    println!("  Running pnpm install...");
+    info!("Running pnpm install...");
     
     // Ensure pnpm is installed, installing via npm if needed
     let pnpm_path = ensure_pnpm_installed()?;
@@ -2406,11 +2407,10 @@ async fn install_app_from_registry(
     
     if !install_output.status.success() {
         let stderr = String::from_utf8_lossy(&install_output.stderr);
-        eprintln!("pnpm install stderr: {}", stderr);
         // Don't fail - the app might still work or user can fix it
-        println!("  Warning: pnpm install had issues, but continuing...");
+        warn!("pnpm install had issues (stderr: {}), but continuing...", stderr);
     } else {
-        println!("  pnpm install completed");
+        info!("pnpm install completed");
     }
     
     // Detect and register the app
@@ -2420,7 +2420,7 @@ async fn install_app_from_registry(
     
     register_app(app_handle, detected.clone())?;
     
-    println!("✅ Installed {} successfully!", app_id);
+    info!("Installed {} successfully!", app_id);
     
     Ok(detected)
 }
@@ -2442,7 +2442,7 @@ fn uninstall_app_from_shared(app_handle: tauri::AppHandle, app_id: String) -> Re
     std::fs::remove_dir_all(&app_dir)
         .map_err(|e| format!("Failed to remove app directory: {}", e))?;
     
-    println!("🗑️  Uninstalled {} from shared apps", app_id);
+    info!("Uninstalled {} from shared apps", app_id);
     
     Ok(())
 }
@@ -2628,13 +2628,13 @@ fn start_ai_server(app: &AppHandle, ai_server_state: Arc<Mutex<Option<CommandChi
         while let Some(event) = rx.blocking_recv() {
             match event {
                 tauri_plugin_shell::process::CommandEvent::Stdout(line) => {
-                    println!("[AI Server] {}", String::from_utf8_lossy(&line));
+                    info!("[AI Server] {}", String::from_utf8_lossy(&line));
                 }
                 tauri_plugin_shell::process::CommandEvent::Stderr(line) => {
-                    eprintln!("[AI Server] {}", String::from_utf8_lossy(&line));
+                    error!("[AI Server] {}", String::from_utf8_lossy(&line));
                 }
                 tauri_plugin_shell::process::CommandEvent::Terminated(status) => {
-                    println!("[AI Server] Terminated with status: {:?}", status);
+                    info!("[AI Server] Terminated with status: {:?}", status);
                     break;
                 }
                 _ => {}
@@ -2642,7 +2642,7 @@ fn start_ai_server(app: &AppHandle, ai_server_state: Arc<Mutex<Option<CommandChi
         }
     });
     
-    println!("🚀 AI Server sidecar started");
+    info!("AI Server sidecar started");
     Ok(())
 }
 
@@ -2652,14 +2652,14 @@ fn cleanup_all_apps(state: &AppState) {
         let app_ids: Vec<String> = app_state.processes.keys().cloned().collect();
         for app_id in app_ids {
             if let Some(mut app_proc) = app_state.processes.remove(&app_id) {
-                println!("🛑 Stopping {}...", app_id);
+                info!("Stopping {}...", app_id);
                 let pid = app_proc.child.id();
                 // Kill the entire process tree
                 kill_process_tree(pid);
                 let _ = app_proc.child.wait();
             }
         }
-        println!("✅ All apps stopped");
+        info!("All apps stopped");
     }
 }
 
@@ -2667,7 +2667,7 @@ fn cleanup_all_apps(state: &AppState) {
 fn cleanup_ai_server(state: &Arc<Mutex<Option<CommandChild>>>) {
     if let Ok(mut ai_server) = state.lock() {
         if let Some(child) = ai_server.take() {
-            println!("🛑 Stopping AI server...");
+            info!("Stopping AI server...");
             
             // Get PID before attempting kill
             let pid = child.pid();
@@ -2675,7 +2675,7 @@ fn cleanup_ai_server(state: &Arc<Mutex<Option<CommandChild>>>) {
             // Try graceful kill first via Tauri's CommandChild
             let kill_result = child.kill();
             if let Err(e) = kill_result {
-                eprintln!("  Tauri kill failed: {}, using kill_process_tree", e);
+                warn!("Tauri kill failed: {}, using kill_process_tree", e);
             }
             
             // Always use kill_process_tree to ensure all children are killed
@@ -2685,7 +2685,7 @@ fn cleanup_ai_server(state: &Arc<Mutex<Option<CommandChild>>>) {
             // Give processes a moment to clean up
             std::thread::sleep(std::time::Duration::from_millis(100));
             
-            println!("✅ AI server stopped (pid {})", pid);
+            info!("AI server stopped (pid {})", pid);
         }
     }
 }
@@ -2769,7 +2769,7 @@ async fn start_audio_capture(
                     if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line_str) {
                         match msg.get("type").and_then(|t| t.as_str()) {
                             Some("ready") => {
-                                println!("[AudioCapture] Ready");
+                                info!("[AudioCapture] Ready");
                                 
                                 // Send start command with the specified mode
                                 if let Ok(mut capture_state) = state_clone.lock() {
@@ -2785,11 +2785,11 @@ async fn start_audio_capture(
                                 }
                             }
                             Some("started") => {
-                                println!("[AudioCapture] Started capturing");
+                                info!("[AudioCapture] Started capturing");
                                 let _ = app_handle.emit("audio-capture-started", ());
                             }
                             Some("stopped") => {
-                                println!("[AudioCapture] Stopped");
+                                info!("[AudioCapture] Stopped");
                                 let _ = app_handle.emit("audio-capture-stopped", ());
                             }
                             Some("audio") => {
@@ -2800,7 +2800,7 @@ async fn start_audio_capture(
                             }
                             Some("error") => {
                                 if let Some(error) = msg.get("error").and_then(|e| e.as_str()) {
-                                    eprintln!("[AudioCapture] Error: {}", error);
+                                    error!("[AudioCapture] Error: {}", error);
                                     let _ = app_handle.emit("audio-capture-error", error);
                                 }
                             }
@@ -2809,10 +2809,10 @@ async fn start_audio_capture(
                     }
                 }
                 tauri_plugin_shell::process::CommandEvent::Stderr(line) => {
-                    eprintln!("[AudioCapture] {}", String::from_utf8_lossy(&line));
+                    error!("[AudioCapture] {}", String::from_utf8_lossy(&line));
                 }
                 tauri_plugin_shell::process::CommandEvent::Terminated(status) => {
-                    println!("[AudioCapture] Terminated with status: {:?}", status);
+                    info!("[AudioCapture] Terminated with status: {:?}", status);
                     let _ = app_handle.emit("audio-capture-stopped", ());
                     
                     // Clear state
@@ -2826,7 +2826,7 @@ async fn start_audio_capture(
         }
     });
     
-    println!("🎤 Audio capture sidecar started");
+    info!("Audio capture sidecar started");
     Ok(true)
 }
 
@@ -2849,7 +2849,7 @@ fn stop_audio_capture(state: State<'_, AudioCaptureState>) -> Result<bool, Strin
         let _ = child.kill();
     }
     
-    println!("🛑 Audio capture stopped");
+    info!("Audio capture stopped");
     Ok(true)
 }
 
@@ -2857,12 +2857,57 @@ fn stop_audio_capture(state: State<'_, AudioCaptureState>) -> Result<bool, Strin
 fn cleanup_audio_capture(state: &Arc<Mutex<Option<CommandChild>>>) {
     if let Ok(mut capture_state) = state.lock() {
         if let Some(child) = capture_state.take() {
-            println!("🛑 Stopping audio capture...");
+            info!("Stopping audio capture...");
             let _ = child.kill();
-            println!("✅ Audio capture stopped");
+            info!("Audio capture stopped");
         }
     }
 }
+
+// ==================== SYSTEM LOGS ====================
+
+/// Get the path to the system log file
+#[tauri::command]
+fn get_system_log_path(app_handle: AppHandle) -> Result<String, String> {
+    let log_dir = app_handle
+        .path()
+        .app_log_dir()
+        .map_err(|e| format!("Failed to get log directory: {}", e))?;
+    
+    // The log plugin creates files like "Moldable.log" in the log dir
+    let log_file = log_dir.join("Moldable.log");
+    Ok(log_file.to_string_lossy().to_string())
+}
+
+/// Read system logs from the log file
+#[tauri::command]
+fn get_system_logs(app_handle: AppHandle, max_lines: Option<usize>) -> Result<Vec<String>, String> {
+    let log_dir = app_handle
+        .path()
+        .app_log_dir()
+        .map_err(|e| format!("Failed to get log directory: {}", e))?;
+    
+    let log_file = log_dir.join("Moldable.log");
+    
+    if !log_file.exists() {
+        return Ok(vec!["No logs yet. Logs will appear here as you use the app.".to_string()]);
+    }
+    
+    let content = std::fs::read_to_string(&log_file)
+        .map_err(|e| format!("Failed to read log file: {}", e))?;
+    
+    let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    
+    // Return last N lines (default 1000)
+    let max = max_lines.unwrap_or(1000);
+    if lines.len() > max {
+        Ok(lines[lines.len() - max..].to_vec())
+    } else {
+        Ok(lines)
+    }
+}
+
+// ==================== END SYSTEM LOGS ====================
 
 // ==================== END AUDIO CAPTURE ====================
 
@@ -2871,7 +2916,7 @@ fn start_config_watcher(app_handle: AppHandle) {
     let config_path = match get_config_file_path() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Failed to get config path for watcher: {}", e);
+            error!("Failed to get config path for watcher: {}", e);
             return;
         }
     };
@@ -2880,7 +2925,7 @@ fn start_config_watcher(app_handle: AppHandle) {
     if let Some(parent) = config_path.parent() {
         if !parent.exists() {
             if let Err(e) = std::fs::create_dir_all(parent) {
-                eprintln!("Failed to create config directory: {}", e);
+                error!("Failed to create config directory: {}", e);
                 return;
             }
         }
@@ -2893,7 +2938,7 @@ fn start_config_watcher(app_handle: AppHandle) {
         let mut debouncer = match new_debouncer(Duration::from_millis(500), tx) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("Failed to create config watcher: {}", e);
+                error!("Failed to create config watcher: {}", e);
                 return;
             }
         };
@@ -2901,11 +2946,11 @@ fn start_config_watcher(app_handle: AppHandle) {
         // Watch the config directory (watching the file directly can miss recreations)
         let watch_path = config_path.parent().unwrap_or(&config_path);
         if let Err(e) = debouncer.watcher().watch(watch_path, notify::RecursiveMode::NonRecursive) {
-            eprintln!("Failed to watch config directory: {}", e);
+            error!("Failed to watch config directory: {}", e);
             return;
         }
         
-        println!("👁️  Watching config file for changes: {:?}", config_path);
+        info!("Watching config file for changes: {:?}", config_path);
         
         // Listen for events
         loop {
@@ -2918,17 +2963,17 @@ fn start_config_watcher(app_handle: AppHandle) {
                     });
                     
                     if config_changed {
-                        println!("📝 Config file changed, notifying frontend");
+                        info!("Config file changed, notifying frontend");
                         if let Err(e) = app_handle.emit("config-changed", ()) {
-                            eprintln!("Failed to emit config-changed event: {}", e);
+                            error!("Failed to emit config-changed event: {}", e);
                         }
                     }
                 }
                 Ok(Err(e)) => {
-                    eprintln!("Config watcher error: {:?}", e);
+                    error!("Config watcher error: {:?}", e);
                 }
                 Err(e) => {
-                    eprintln!("Config watcher channel error: {:?}", e);
+                    error!("Config watcher channel error: {:?}", e);
                     break;
                 }
             }
@@ -2958,6 +3003,16 @@ pub fn run() {
     let ai_server_for_setup = ai_server_state.clone();
     
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    Target::new(TargetKind::Stdout),
+                    Target::new(TargetKind::LogDir { file_name: None }),
+                ])
+                .max_file_size(5_000_000) // 5MB max, then rotate
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne) // Only keep current file
+                .build(),
+        )
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -3014,7 +3069,10 @@ pub fn run() {
             // Audio capture commands
             is_system_audio_available,
             start_audio_capture,
-            stop_audio_capture
+            stop_audio_capture,
+            // System logs
+            get_system_logs,
+            get_system_log_path
         ])
         .setup(move |app| {
             #[cfg(debug_assertions)]
@@ -3099,12 +3157,12 @@ pub fn run() {
             
             // Ensure default workspace exists on fresh install
             if let Err(e) = ensure_default_workspace() {
-                eprintln!("⚠️  Failed to create default workspace: {}", e);
+                warn!("Failed to create default workspace: {}", e);
             }
             
             // Install bundled scripts to ~/.moldable/shared/scripts/
             if let Err(e) = ensure_bundled_scripts(app.handle()) {
-                eprintln!("⚠️  Failed to install bundled scripts: {}", e);
+                warn!("Failed to install bundled scripts: {}", e);
             }
             
             // Install Hello Moldables tutorial app on first launch (async, runs in background)
@@ -3112,7 +3170,7 @@ pub fn run() {
             
             // Start AI server sidecar
             if let Err(e) = start_ai_server(app.handle(), ai_server_for_setup) {
-                eprintln!("Failed to start AI server: {}", e);
+                error!("Failed to start AI server: {}", e);
                 // Don't fail app startup - the UI will show onboarding if server isn't running
             }
             
@@ -3133,7 +3191,7 @@ pub fn run() {
                 let apps = match get_registered_apps() {
                     Ok(a) => a,
                     Err(e) => {
-                        eprintln!("Failed to load registered apps: {}", e);
+                        error!("Failed to load registered apps: {}", e);
                         return;
                     }
                 };
@@ -3142,7 +3200,7 @@ pub fn run() {
                     return;
                 }
 
-                println!("🚀 Auto-starting {} registered app(s)...", apps.len());
+                info!("Auto-starting {} registered app(s)...", apps.len());
                 for a in apps {
                     // Prefer configured port, but always fall back if allowed.
                     // Retry a few times in case availability changes between checks and spawn.
@@ -3168,13 +3226,13 @@ pub fn run() {
                             &state_for_autostart,
                         ) {
                             Ok(_) => {
-                                println!("✅ Started {} on :{}", a.id, chosen);
+                                info!("Started {} on :{}", a.id, chosen);
                                 break;
                             }
                             Err(e) => {
                                 attempts_left = attempts_left.saturating_sub(1);
                                 if attempts_left == 0 || a.requires_port {
-                                    eprintln!("❌ Failed to start {}: {}", a.id, e);
+                                    error!("Failed to start {}: {}", a.id, e);
                                     break;
                                 }
                                 // Try the next free port
@@ -3191,7 +3249,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(move |_app_handle, event| {
             if let tauri::RunEvent::Exit = event {
-                println!("🔄 Moldable shutting down, cleaning up...");
+                info!("Moldable shutting down, cleaning up...");
                 // Kill audio capture first
                 cleanup_audio_capture(&audio_capture_for_exit);
                 // Kill AI server sidecar
