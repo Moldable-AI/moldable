@@ -260,7 +260,7 @@ export function ChatPanel({
               <MessageCircle className="size-4" />
               <span className="text-sm font-medium">Chat</span>
               <span className="bg-muted text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary rounded px-1.5 py-0.5 text-xs transition-colors">
-                ⌘K
+                ⌘M
               </span>
             </button>
           </motion.div>

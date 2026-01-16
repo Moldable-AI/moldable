@@ -286,10 +286,10 @@ export function App() {
     setIsChatExpanded((prev) => !prev)
   }, [isChatMinimized])
 
-  // Cmd+K to summon chat from minimized state
+  // Cmd+M to summon chat from minimized state (M for Moldable)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'k' && e.metaKey && !e.shiftKey) {
+      if (e.key === 'm' && e.metaKey && !e.shiftKey) {
         e.preventDefault()
         if (isChatMinimized) {
           setIsChatMinimized(false)

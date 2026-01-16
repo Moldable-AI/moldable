@@ -155,6 +155,21 @@ export function GlobalCommandMenu({
       <CommandList>
         <CommandEmpty>No results found.</CommandEmpty>
 
+        {/* Toggle chat - at top for quick access */}
+        <CommandGroup heading="Quick Actions">
+          <CommandItem
+            onSelect={() => {
+              onToggleChat()
+              setOpen(false)
+            }}
+          >
+            <MessageSquare className="mr-2 size-4" />
+            <span>Toggle chat</span>
+          </CommandItem>
+        </CommandGroup>
+
+        <CommandSeparator />
+
         {/* App-specific commands when an app is active */}
         {activeApp && appCommands.length > 0
           ? Object.entries(groupedCommands).map(([group, commands]) => (
@@ -274,21 +289,6 @@ export function GlobalCommandMenu({
               )}
             </CommandItem>
           ))}
-        </CommandGroup>
-
-        <CommandSeparator />
-
-        {/* Global controls */}
-        <CommandGroup heading="Controls">
-          <CommandItem
-            onSelect={() => {
-              onToggleChat()
-              setOpen(false)
-            }}
-          >
-            <MessageSquare className="mr-2 size-4" />
-            <span>Toggle chat</span>
-          </CommandItem>
         </CommandGroup>
       </CommandList>
     </CommandDialog>
