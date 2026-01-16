@@ -37,9 +37,15 @@ export function useAppUpdate(options: UseAppUpdateOptions = {}) {
   })
 
   const checkForUpdate = useCallback(async () => {
+    console.log('[update] Checking for updates...')
     setState((s) => ({ ...s, checking: true, error: null }))
     try {
       const update = await check()
+      console.log('[update] Check result:', {
+        available: update?.available,
+        version: update?.version,
+        currentVersion: update?.currentVersion,
+      })
       setState((s) => ({
         ...s,
         checking: false,
@@ -52,6 +58,8 @@ export function useAppUpdate(options: UseAppUpdateOptions = {}) {
       const errorMessage =
         error instanceof Error ? error.message : 'Update check failed'
 
+      console.warn('[update] Check failed:', error)
+
       // Silently ignore network errors - user might be offline
       if (
         errorMessage.includes('network') ||
@@ -62,8 +70,6 @@ export function useAppUpdate(options: UseAppUpdateOptions = {}) {
         setState((s) => ({ ...s, checking: false }))
         return null
       }
-
-      console.warn('[update] Check failed:', errorMessage)
       setState((s) => ({
         ...s,
         checking: false,

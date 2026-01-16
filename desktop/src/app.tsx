@@ -28,6 +28,7 @@ import { UpdateNotification } from './components/update-notification'
 import { WorkspaceSelector } from './components/workspace-selector'
 import { listen } from '@tauri-apps/api/event'
 import { homeDir } from '@tauri-apps/api/path'
+import { Toaster } from 'sonner'
 
 // Hook to load app configs from registry and auto-start them
 function useAppConfigs(workspaceId: string | undefined) {
@@ -561,6 +562,9 @@ export function App() {
         activeWorkspace={activeWorkspace}
         onWorkspaceChange={setActiveWorkspace}
       />
+
+      {/* Toast notifications */}
+      <Toaster position="bottom-right" />
     </div>
   )
 }

@@ -1,4 +1,5 @@
 import {
+  Download,
   Grid2x2,
   MessageSquare,
   Monitor,
@@ -8,7 +9,7 @@ import {
   Settings,
   Sun,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cn, useTheme } from '@moldable-ai/ui'
 import {
   DropdownMenu,
@@ -26,9 +27,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@moldable-ai/ui'
+import { useAppUpdate } from '../hooks/use-app-update'
 import type { AppConfig } from '../app'
 import { AddAppDialog } from './add-app-dialog'
 import { McpSettingsDialog } from './mcp-settings-dialog'
+import { toast } from 'sonner'
 
 // Icon dimensions for calculating overflow
 const ICON_SIZE = 36 // size-9 = 36px
@@ -96,6 +99,30 @@ export function Sidebar({
   isChatActive = false,
 }: SidebarProps) {
   const { theme, resolvedTheme, setTheme } = useTheme()
+  const { checking: checkingForUpdates, checkForUpdate } = useAppUpdate({
+    checkOnMount: false, // Don't duplicate the check from AppUpdateDialog
+  })
+
+  const handleCheckForUpdate = useCallback(async () => {
+    const toastId = toast.loading('Checking for updates...')
+    try {
+      const update = await checkForUpdate()
+      if (update?.available) {
+        toast.success(`Update available: v${update.version}`, {
+          id: toastId,
+          description: 'Check the notification in the bottom left corner.',
+        })
+      } else {
+        toast.success("You're on the latest version", { id: toastId })
+      }
+    } catch (error) {
+      toast.error('Failed to check for updates', {
+        id: toastId,
+        description: error instanceof Error ? error.message : 'Unknown error',
+      })
+    }
+  }, [checkForUpdate])
+
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isMcpDialogOpen, setIsMcpDialogOpen] = useState(false)
   const [isAddAppDialogOpen, setIsAddAppDialogOpen] = useState(false)
@@ -329,6 +356,15 @@ export function Sidebar({
             >
               <Plug className="size-4" />
               MCP Servers
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={handleCheckForUpdate}
+              disabled={checkingForUpdates}
+              className="text-foreground hover:bg-muted flex cursor-pointer items-center gap-2 px-3 py-2 text-sm"
+            >
+              <Download className="size-4" />
+              Check for Updates
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
