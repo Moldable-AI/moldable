@@ -1,6 +1,12 @@
 import { Check, ExternalLink, Loader2, Plus } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
-import { Button, Input, Label } from '@moldable-ai/ui'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Badge, Button, Input, Label } from '@moldable-ai/ui'
+import type { AppRegistryEntry } from '../lib/app-manager'
+import {
+  fetchAppRegistry,
+  getRegisteredApps,
+  installAppFromRegistry,
+} from '../lib/app-manager'
 import { cn } from '../lib/utils'
 import type { Workspace } from '../lib/workspaces'
 import { WORKSPACE_COLORS } from '../lib/workspaces'
@@ -24,15 +30,17 @@ import { AnimatePresence, motion } from 'framer-motion'
  * 2. API key setup (only if needed)
  */
 
-type OnboardingStep = 'workspace' | 'api-key'
+type OnboardingStep = 'workspace' | 'api-key' | 'starter-apps'
 type KeyProvider = 'openrouter' | 'anthropic' | 'openai' | null
 
 interface OnboardingProps {
   workspaces: Workspace[]
   health: AIServerHealth
-  onComplete: (workspaceId: string) => void
+  onComplete: (workspaceId: string, markOnboardingDone?: boolean) => void
   onCreateWorkspace: (name: string, color?: string) => Promise<Workspace>
   onHealthRetry: () => void
+  /** Whether onboarding was already completed for this workspace (persisted) */
+  workspaceOnboardingCompleted?: boolean
 }
 
 /** Detect the provider from an API key based on its prefix */
@@ -43,15 +51,6 @@ function detectKeyProvider(key: string): KeyProvider {
   if (trimmed.startsWith('sk-proj-') || trimmed.startsWith('sk-'))
     return 'openai'
   return null
-}
-
-const providerInfo: Record<
-  Exclude<KeyProvider, null>,
-  { name: string; color: string }
-> = {
-  openrouter: { name: 'OpenRouter', color: 'text-purple-500' },
-  anthropic: { name: 'Anthropic', color: 'text-orange-500' },
-  openai: { name: 'OpenAI', color: 'text-green-500' },
 }
 
 // Animation variants
@@ -86,10 +85,10 @@ export function Onboarding({
   onComplete,
   onCreateWorkspace,
   onHealthRetry,
+  workspaceOnboardingCompleted = false,
 }: OnboardingProps) {
   // Determine if we need API key step
   const needsApiKey = health.status === 'no-keys'
-  const isServerStarting = health.status === 'unhealthy'
 
   // Track selected workspace (user must click to provide gesture)
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(
@@ -114,20 +113,64 @@ export function Onboarding({
   const [saveKeyError, setSaveKeyError] = useState<string | null>(null)
   const [saveKeySuccess, setSaveKeySuccess] = useState(false)
 
+  // Starter apps state
+  const [starterApps, setStarterApps] = useState<AppRegistryEntry[]>([])
+  const [loadingApps, setLoadingApps] = useState(false)
+  const [installingApp, setInstallingApp] = useState<string | null>(null)
+  const [installedAppIds, setInstalledAppIds] = useState<Set<string>>(new Set())
+
   const detectedProvider = useMemo(() => detectKeyProvider(apiKey), [apiKey])
   const isValidKey = apiKey.trim().length > 20 && detectedProvider !== null
 
-  const handleSelectWorkspace = (workspaceId: string) => {
+  // Load starter apps when reaching that step
+  useEffect(() => {
+    if (step === 'starter-apps' && starterApps.length === 0 && !loadingApps) {
+      setLoadingApps(true)
+      Promise.all([fetchAppRegistry(), getRegisteredApps()])
+        .then(([registry, installed]) => {
+          // Filter to apps that don't require additional env vars
+          // These are the best for onboarding since they work immediately
+          const noEnvRequired = registry.apps.filter(
+            (app) => !app.requiredEnv || app.requiredEnv.length === 0,
+          )
+          setStarterApps(noEnvRequired)
+          setInstalledAppIds(new Set(installed.map((a) => a.id)))
+        })
+        .catch((err) => {
+          console.error('Failed to load starter apps:', err)
+        })
+        .finally(() => {
+          setLoadingApps(false)
+        })
+    }
+  }, [step, starterApps.length, loadingApps])
+
+  const handleSelectWorkspace = async (workspaceId: string) => {
     setSelectedWorkspaceId(workspaceId)
 
-    // If we need API key, go to that step. Otherwise complete.
+    // If we need API key, go to that step first
     if (needsApiKey) {
       setStep('api-key')
-    } else if (isServerStarting) {
-      // Server is starting, just complete and let the main app show loading
-      onComplete(workspaceId)
-    } else {
-      onComplete(workspaceId)
+      return
+    }
+
+    // Check if this workspace already has apps installed
+    // (can't rely on props since they're for the previous/no workspace)
+    try {
+      const installed = await getRegisteredApps(workspaceId)
+      const hasApps = installed.length > 0
+
+      if (hasApps || workspaceOnboardingCompleted) {
+        // User already has apps or completed onboarding before - skip starter apps
+        onComplete(workspaceId, !workspaceOnboardingCompleted)
+      } else {
+        // Show starter apps step
+        setStep('starter-apps')
+      }
+    } catch (err) {
+      console.error('Failed to check installed apps:', err)
+      // On error, just show starter apps step
+      setStep('starter-apps')
     }
   }
 
@@ -169,28 +212,75 @@ export function Onboarding({
     try {
       await invoke<string>('save_api_key', { apiKey: apiKey.trim() })
       setSaveKeySuccess(true)
+      setIsSavingKey(false)
 
-      // Brief delay to show success, then complete onboarding
+      // Brief delay to show success, then continue
       setTimeout(async () => {
-        await onHealthRetry()
-        onComplete(selectedWorkspaceId)
+        try {
+          await onHealthRetry()
+        } catch (err) {
+          console.error('Error refreshing health:', err)
+        }
+
+        // Check if workspace has apps installed
+        try {
+          const installed = await getRegisteredApps(selectedWorkspaceId)
+          const hasApps = installed.length > 0
+
+          if (hasApps || workspaceOnboardingCompleted) {
+            // User already has apps or completed onboarding before - skip starter apps
+            onComplete(selectedWorkspaceId, !workspaceOnboardingCompleted)
+          } else {
+            // Go to starter apps step
+            setStep('starter-apps')
+            setSaveKeySuccess(false) // Reset for potential re-entry
+          }
+        } catch (err) {
+          console.error('Failed to check installed apps:', err)
+          // On error, just show starter apps step
+          setStep('starter-apps')
+          setSaveKeySuccess(false)
+        }
       }, 500)
     } catch (error) {
       console.error('Failed to save API key:', error)
-      setSaveKeyError(
-        error instanceof Error ? error.message : 'Failed to save API key',
-      )
+      setSaveKeyError(error instanceof Error ? error.message : String(error))
       setIsSavingKey(false)
     }
-  }, [apiKey, isValidKey, selectedWorkspaceId, onComplete, onHealthRetry])
+  }, [
+    apiKey,
+    isValidKey,
+    selectedWorkspaceId,
+    onHealthRetry,
+    onComplete,
+    workspaceOnboardingCompleted,
+  ])
 
   const handleOpenUrl = useCallback(async (url: string) => {
     await open(url)
   }, [])
 
   const handleSkipApiKey = () => {
+    // Go to starter apps even if skipping API key
+    setStep('starter-apps')
+  }
+
+  const handleInstallApp = useCallback(async (app: AppRegistryEntry) => {
+    setInstallingApp(app.id)
+    try {
+      await installAppFromRegistry(app.id, app.path, app.commit, app.version)
+      setInstalledAppIds((prev) => new Set([...prev, app.id]))
+    } catch (err) {
+      console.error('Failed to install app:', err)
+    } finally {
+      setInstallingApp(null)
+    }
+  }, [])
+
+  const handleFinishOnboarding = () => {
     if (selectedWorkspaceId) {
-      onComplete(selectedWorkspaceId)
+      // Mark onboarding as complete for this workspace
+      onComplete(selectedWorkspaceId, true)
     }
   }
 
@@ -432,36 +522,22 @@ export function Onboarding({
                     variants={fadeIn}
                     transition={{ duration: 0.2 }}
                   >
-                    <div className="relative">
-                      <Input
-                        type="password"
-                        placeholder="OpenRouter, Anthropic, or OpenAI API key"
-                        value={apiKey}
-                        onChange={(e) => {
-                          setApiKey(e.target.value)
-                          setSaveKeyError(null)
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && isValidKey) {
-                            handleSaveApiKey()
-                          }
-                        }}
-                        className="font-mono text-sm"
-                        autoFocus
-                      />
-                      <AnimatePresence>
-                        {detectedProvider && (
-                          <motion.span
-                            className={`absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium ${providerInfo[detectedProvider].color}`}
-                            initial={{ opacity: 0, x: 10 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            exit={{ opacity: 0, x: 10 }}
-                          >
-                            {providerInfo[detectedProvider].name}
-                          </motion.span>
-                        )}
-                      </AnimatePresence>
-                    </div>
+                    <Input
+                      type="password"
+                      placeholder="OpenRouter, Anthropic, or OpenAI API key"
+                      value={apiKey}
+                      onChange={(e) => {
+                        setApiKey(e.target.value)
+                        setSaveKeyError(null)
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && isValidKey) {
+                          handleSaveApiKey()
+                        }
+                      }}
+                      className="font-mono text-sm"
+                      autoFocus
+                    />
 
                     <AnimatePresence>
                       {saveKeyError && (
@@ -562,12 +638,141 @@ export function Onboarding({
                       <Check className="size-6" />
                     </motion.div>
                     <p className="text-muted-foreground text-sm">
-                      API key saved. Starting...
+                      API key saved!
                     </p>
-                    <Loader2 className="text-muted-foreground size-5 animate-spin" />
                   </motion.div>
                 )}
               </AnimatePresence>
+            </motion.div>
+          )}
+
+          {/* Step 3: Starter Apps */}
+          {step === 'starter-apps' && (
+            <motion.div
+              key="starter-apps-step"
+              className="flex w-full flex-col items-center gap-6"
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              variants={fadeIn}
+              transition={{ duration: 0.2 }}
+            >
+              <motion.div
+                className="flex flex-col items-center gap-2"
+                variants={fadeIn}
+              >
+                <h1 className="text-foreground text-xl font-medium">
+                  Install starter apps
+                </h1>
+                <p className="text-muted-foreground text-center text-sm">
+                  Get started with some pre-built apps, or skip to create your
+                  own.
+                </p>
+              </motion.div>
+
+              <motion.div
+                className="flex w-full flex-col gap-3"
+                initial="initial"
+                animate="animate"
+                variants={staggerContainer}
+              >
+                {loadingApps ? (
+                  <div className="text-muted-foreground flex items-center justify-center py-8">
+                    <Loader2 className="mr-2 size-4 animate-spin" />
+                    Loading apps...
+                  </div>
+                ) : starterApps.length === 0 ? (
+                  <div className="text-muted-foreground py-4 text-center text-sm">
+                    No starter apps available.
+                  </div>
+                ) : (
+                  starterApps.slice(0, 4).map((app, index) => {
+                    const isInstalled = installedAppIds.has(app.id)
+                    const isInstalling = installingApp === app.id
+
+                    return (
+                      <motion.div
+                        key={app.id}
+                        className="bg-card border-border flex w-full items-center gap-3 rounded-lg border p-3"
+                        variants={staggerItem}
+                        transition={{ duration: 0.2, delay: index * 0.05 }}
+                      >
+                        {/* Icon */}
+                        <div className="bg-muted flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg">
+                          {app.iconUrl ? (
+                            <img
+                              src={app.iconUrl}
+                              alt={app.name}
+                              className="size-full object-cover p-1"
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none'
+                                e.currentTarget.nextElementSibling?.classList.remove(
+                                  'hidden',
+                                )
+                              }}
+                            />
+                          ) : null}
+                          <span
+                            className={cn('text-lg', app.iconUrl && 'hidden')}
+                          >
+                            {app.icon}
+                          </span>
+                        </div>
+
+                        {/* Info */}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="text-foreground text-sm font-medium">
+                              {app.name}
+                            </p>
+                          </div>
+                          {app.description && (
+                            <p className="text-muted-foreground line-clamp-1 text-xs">
+                              {app.description}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Action */}
+                        {isInstalled ? (
+                          <Badge variant="secondary" className="shrink-0">
+                            Installed
+                          </Badge>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleInstallApp(app)}
+                            disabled={installingApp !== null}
+                            className="shrink-0 cursor-pointer"
+                          >
+                            {isInstalling ? (
+                              <>
+                                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                                Installing...
+                              </>
+                            ) : (
+                              'Install'
+                            )}
+                          </Button>
+                        )}
+                      </motion.div>
+                    )
+                  })
+                )}
+              </motion.div>
+
+              <div className="flex w-full flex-col gap-2">
+                <Button
+                  className="w-full cursor-pointer"
+                  onClick={handleFinishOnboarding}
+                  disabled={installingApp !== null}
+                >
+                  {installedAppIds.size > 0
+                    ? 'Get Started'
+                    : 'Skip & Get Started'}
+                </Button>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

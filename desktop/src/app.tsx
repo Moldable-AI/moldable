@@ -13,6 +13,7 @@ import { cn } from './lib/utils'
 import { useAIServerHealth } from './hooks/use-ai-server-health'
 import { useAppStatus } from './hooks/use-app-status'
 import { useHotReloadNotification } from './hooks/use-hot-reload-notification'
+import { PREFERENCE_KEYS, useMoldableConfig } from './hooks/use-moldable-config'
 import { useWorkspaces } from './hooks/use-workspaces'
 import { ApiKeyDialog } from './components/api-key-dialog'
 import { AppLogs } from './components/app-logs'
@@ -199,12 +200,17 @@ export function App() {
   // Track if user has completed onboarding this session (required for WebKit iframe painting)
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false)
 
+  // Persisted preference - remember if onboarding was completed for this workspace
+  const [workspaceOnboardingCompleted, setWorkspaceOnboardingCompleted] =
+    useMoldableConfig(PREFERENCE_KEYS.ONBOARDING_COMPLETED, false)
+
   const { apps, addApp, deleteApp, reloadApps } = useAppConfigs(
     activeWorkspace?.id,
   )
   const [activeApp, setActiveApp] = useState<AppConfig | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
   const [isChatExpanded, setIsChatExpanded] = useState(false)
+  const [isChatMinimized, setIsChatMinimized] = useState(false)
   const [isLogsOpen, setIsLogsOpen] = useState(false)
   const [userHomeDir, setUserHomeDir] = useState<string | null>(null)
   const [showApiKeySetup, setShowApiKeySetup] = useState(false)
@@ -272,15 +278,40 @@ export function App() {
   }, [restart])
 
   const handleChatToggle = useCallback(() => {
+    // If minimized, bring it back first
+    if (isChatMinimized) {
+      setIsChatMinimized(false)
+    }
     setIsChatExpanded((prev) => !prev)
-  }, [])
+  }, [isChatMinimized])
+
+  // Cmd+K to summon chat from minimized state
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'k' && e.metaKey && !e.shiftKey) {
+        e.preventDefault()
+        if (isChatMinimized) {
+          setIsChatMinimized(false)
+        }
+        setIsChatExpanded(true)
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [isChatMinimized])
 
   const handleOnboardingComplete = useCallback(
-    (workspaceId: string) => {
+    (workspaceId: string, markOnboardingDone: boolean = true) => {
       setActiveWorkspace(workspaceId)
       setHasCompletedOnboarding(true)
+      // Mark workspace onboarding as complete (persisted for future launches)
+      if (markOnboardingDone) {
+        // Small delay to ensure workspace is active before saving preference
+        setTimeout(() => setWorkspaceOnboardingCompleted(true), 100)
+      }
     },
-    [setActiveWorkspace],
+    [setActiveWorkspace, setWorkspaceOnboardingCompleted],
   )
 
   // Show onboarding until complete (provides user gesture for WebKit iframe painting)
@@ -296,6 +327,7 @@ export function App() {
         onComplete={handleOnboardingComplete}
         onCreateWorkspace={createWorkspace}
         onHealthRetry={checkHealth}
+        workspaceOnboardingCompleted={workspaceOnboardingCompleted}
       />
     )
   }
@@ -468,6 +500,8 @@ export function App() {
       <ChatContainer
         isExpanded={isChatExpanded}
         onExpandedChange={setIsChatExpanded}
+        isMinimized={isChatMinimized}
+        onMinimizedChange={setIsChatMinimized}
         workspaceId={activeWorkspace?.id}
         registeredApps={apps.map((app) => ({
           id: app.id,

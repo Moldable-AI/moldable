@@ -120,25 +120,6 @@ export function useAppUpdate(options: UseAppUpdateOptions = {}) {
     setState((s) => ({ ...s, available: false, update: null }))
   }, [])
 
-  // Development helper to simulate an available update
-  const simulateUpdate = useCallback(() => {
-    setState({
-      available: true,
-      checking: false,
-      downloading: false,
-      progress: 0,
-      error: null,
-      update: {
-        version: '99.0.0',
-        body: 'This is a simulated update for testing the UI.\n\n- New feature A\n- Bug fix B\n- Improvement C',
-        // These won't actually work but satisfy the type
-        downloadAndInstall: async () => {
-          console.log('[update] Simulated download - not actually downloading')
-        },
-      } as Update,
-    })
-  }, [])
-
   // Check on mount (after a short delay to not block startup)
   useEffect(() => {
     if (checkOnMount) {
@@ -162,7 +143,5 @@ export function useAppUpdate(options: UseAppUpdateOptions = {}) {
     checkForUpdate,
     downloadAndInstall,
     dismiss,
-    /** Development only: simulate an update for UI testing */
-    simulateUpdate,
   }
 }

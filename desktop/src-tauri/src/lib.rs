@@ -109,6 +109,30 @@ fn start_app_internal(
     port: Option<u16>,
     state: &AppState,
 ) -> Result<AppStatus, String> {
+    // Validate working directory exists
+    let working_path = std::path::Path::new(&working_dir);
+    if !working_path.exists() {
+        return Err(format!(
+            "App directory does not exist: {}. The app may need to be reinstalled.",
+            working_dir
+        ));
+    }
+    if !working_path.is_dir() {
+        return Err(format!(
+            "App path is not a directory: {}",
+            working_dir
+        ));
+    }
+    
+    // Check for package.json (most apps need this)
+    let package_json = working_path.join("package.json");
+    if !package_json.exists() {
+        return Err(format!(
+            "No package.json found in app directory: {}. The app may be incomplete or corrupted.",
+            working_dir
+        ));
+    }
+    
     let mut app_state = state.0.lock().map_err(|e| e.to_string())?;
 
     // Check if already running
@@ -1094,8 +1118,30 @@ fn get_registered_apps() -> Result<Vec<RegisteredApp>, String> {
     Ok(apps)
 }
 
+/// Get registered apps for a specific workspace (used during onboarding before workspace is active)
 #[tauri::command]
-fn register_app(app: RegisteredApp) -> Result<Vec<RegisteredApp>, String> {
+fn get_registered_apps_for_workspace(workspace_id: String) -> Result<Vec<RegisteredApp>, String> {
+    let home = std::env::var("HOME").map_err(|_| "Could not get HOME directory")?;
+    let config_path = std::path::PathBuf::from(format!(
+        "{}/.moldable/workspaces/{}/config.json",
+        home, workspace_id
+    ));
+    
+    if !config_path.exists() {
+        return Ok(Vec::new());
+    }
+    
+    let content = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read config: {}", e))?;
+    
+    let config: MoldableConfig = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse config: {}", e))?;
+    
+    Ok(config.apps)
+}
+
+#[tauri::command]
+fn register_app(app_handle: tauri::AppHandle, app: RegisteredApp) -> Result<Vec<RegisteredApp>, String> {
     let config_path = get_config_file_path()?;
     
     // Ensure directory exists
@@ -1125,11 +1171,17 @@ fn register_app(app: RegisteredApp) -> Result<Vec<RegisteredApp>, String> {
     std::fs::write(&config_path, content)
         .map_err(|e| format!("Failed to write config: {}", e))?;
     
+    // Emit config-changed event to notify frontend immediately
+    // (file watcher has 500ms debounce which can cause delays)
+    if let Err(e) = app_handle.emit("config-changed", ()) {
+        eprintln!("Failed to emit config-changed event: {}", e);
+    }
+    
     get_registered_apps()
 }
 
 #[tauri::command]
-fn unregister_app(app_id: String) -> Result<Vec<RegisteredApp>, String> {
+fn unregister_app(app_handle: tauri::AppHandle, app_id: String) -> Result<Vec<RegisteredApp>, String> {
     let config_path = get_config_file_path()?;
     
     if !config_path.exists() {
@@ -1148,6 +1200,11 @@ fn unregister_app(app_id: String) -> Result<Vec<RegisteredApp>, String> {
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
     std::fs::write(&config_path, content)
         .map_err(|e| format!("Failed to write config: {}", e))?;
+    
+    // Emit config-changed event to notify frontend immediately
+    if let Err(e) = app_handle.emit("config-changed", ()) {
+        eprintln!("Failed to emit config-changed event: {}", e);
+    }
     
     get_registered_apps()
 }
@@ -1233,7 +1290,8 @@ fn detect_app_in_folder(path: String) -> Result<Option<RegisteredApp>, String> {
             
             if has_dev {
                 // Use manifest port or find an available one
-                let port = manifest.port.unwrap_or_else(|| find_available_port(3001));
+                // Start at 4100 to avoid conflicts with common dev server ports (3000-3100)
+                let port = manifest.port.unwrap_or_else(|| find_available_port(4100));
                 
                 // Use manifest command or find pnpm
                 let command = manifest.command
@@ -1605,8 +1663,18 @@ fn save_api_key(api_key: String) -> Result<String, String> {
         lines.push(format!("{}={}", env_var_name, api_key));
     }
     
-    std::fs::write(&env_path, lines.join("\n"))
+    // Write and sync to ensure data is flushed to disk before returning
+    // This prevents race conditions where the AI server reads stale data
+    let file = std::fs::File::create(&env_path)
+        .map_err(|e| format!("Failed to create .env: {}", e))?;
+    use std::io::Write;
+    let mut writer = std::io::BufWriter::new(file);
+    writer.write_all(lines.join("\n").as_bytes())
         .map_err(|e| format!("Failed to write .env: {}", e))?;
+    writer.flush()
+        .map_err(|e| format!("Failed to flush .env: {}", e))?;
+    writer.get_ref().sync_all()
+        .map_err(|e| format!("Failed to sync .env: {}", e))?;
     
     Ok(provider_name.to_string())
 }
@@ -1804,13 +1872,13 @@ fn list_available_apps() -> Result<Vec<AvailableApp>, String> {
 
 /// Install an available app by path (register it in config)
 #[tauri::command]
-fn install_available_app(path: String) -> Result<RegisteredApp, String> {
+fn install_available_app(app_handle: tauri::AppHandle, path: String) -> Result<RegisteredApp, String> {
     // Detect the app
     let detected = detect_app_in_folder(path.clone())?
         .ok_or_else(|| "Could not detect app in folder".to_string())?;
     
     // Register it
-    register_app(detected.clone())?;
+    register_app(app_handle, detected.clone())?;
     
     Ok(detected)
 }
@@ -1925,6 +1993,7 @@ async fn fetch_app_registry(force_refresh: Option<bool>) -> Result<AppRegistry, 
 /// Install an app from the registry (download from GitHub)
 #[tauri::command]
 async fn install_app_from_registry(
+    app_handle: tauri::AppHandle,
     app_id: String,
     app_path: String,
     commit: String,
@@ -1960,7 +2029,7 @@ async fn install_app_from_registry(
         let detected = detect_app_in_folder(app_dir_str)?
             .ok_or_else(|| "Failed to detect app".to_string())?;
         
-        register_app(detected.clone())?;
+        register_app(app_handle.clone(), detected.clone())?;
         
         println!("✅ Registered {} in workspace!", app_id);
         
@@ -2140,7 +2209,7 @@ async fn install_app_from_registry(
     let detected = detect_app_in_folder(app_dir_str.clone())?
         .ok_or_else(|| "Failed to detect installed app".to_string())?;
     
-    register_app(detected.clone())?;
+    register_app(app_handle, detected.clone())?;
     
     println!("✅ Installed {} successfully!", app_id);
     
@@ -2149,7 +2218,7 @@ async fn install_app_from_registry(
 
 /// Uninstall an app from the shared directory
 #[tauri::command]
-fn uninstall_app_from_shared(app_id: String) -> Result<(), String> {
+fn uninstall_app_from_shared(app_handle: tauri::AppHandle, app_id: String) -> Result<(), String> {
     let shared_apps_dir = get_shared_apps_dir()?;
     let app_dir = shared_apps_dir.join(&app_id);
     
@@ -2158,7 +2227,7 @@ fn uninstall_app_from_shared(app_id: String) -> Result<(), String> {
     }
     
     // First unregister from config
-    let _ = unregister_app(app_id.clone());
+    let _ = unregister_app(app_handle, app_id.clone());
     
     // Then remove the directory
     std::fs::remove_dir_all(&app_dir)
@@ -2686,6 +2755,7 @@ pub fn run() {
             get_moldable_config_path,
             get_moldable_root,
             get_registered_apps,
+            get_registered_apps_for_workspace,
             register_app,
             unregister_app,
             detect_app_in_folder,

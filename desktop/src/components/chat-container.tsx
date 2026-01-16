@@ -27,6 +27,9 @@ const WELCOME_MESSAGE = (
 interface ChatContainerProps {
   isExpanded: boolean
   onExpandedChange: (expanded: boolean) => void
+  /** Whether the chat is minimized (hidden below fold) */
+  isMinimized: boolean
+  onMinimizedChange: (minimized: boolean) => void
   /** Active workspace ID - conversations are scoped to workspace */
   workspaceId?: string
   /** All registered apps in Moldable */
@@ -42,6 +45,8 @@ interface ChatContainerProps {
 export function ChatContainer({
   isExpanded,
   onExpandedChange,
+  isMinimized,
+  onMinimizedChange,
   workspaceId,
   registeredApps,
   activeApp,
@@ -240,6 +245,14 @@ export function ChatContainer({
     messageCount: c.messageCount,
   }))
 
+  // Generate contextual placeholder based on active app
+  const placeholder = useMemo(() => {
+    if (activeApp) {
+      return 'What can I help with or tweak?'
+    }
+    return 'What should we build today?'
+  }, [activeApp])
+
   return (
     <ChatPanel
       messages={chatMessages}
@@ -260,10 +273,12 @@ export function ChatContainer({
       currentConversationId={currentConversationId}
       onSelectConversation={handleSelectConversation}
       onDeleteConversation={handleDeleteConversation}
-      placeholder="What should we do today?"
+      placeholder={placeholder}
       welcomeMessage={WELCOME_MESSAGE}
       isExpanded={isExpanded}
       onExpandedChange={onExpandedChange}
+      isMinimized={isMinimized}
+      onMinimizedChange={onMinimizedChange}
       missingApiKey={missingApiKey}
       onAddApiKey={onAddApiKey}
     />

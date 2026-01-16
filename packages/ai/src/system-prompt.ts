@@ -208,11 +208,104 @@ This checks:
 - \`moldable.json\` exists with required fields (name, icon, description, widgetSize)
 - \`next.config.ts\` has \`devIndicators: false\`
 - \`scripts/moldable-dev.mjs\` exists and uses direct execution: \`spawn('next', ['dev', '--turbopack', ...])\`
+- \`package.json\` dev script is \`"node ./scripts/moldable-dev.mjs"\` (NOT \`"next dev"\` directly)
 - \`src/app/widget/\` exists with \`layout.tsx\` and \`page.tsx\`
 - Widget layout uses \`<WidgetLayout>\` from \`@moldable-ai/ui\`
 - \`src/app/api/moldable/health/route.ts\` exists
 
 **Do not consider an app complete until it passes lint checks and is registered in the workspace config.**
+
+### Required: scripts/moldable-dev.mjs
+
+**CRITICAL**: Every Moldable app MUST have this startup script. Do NOT use \`"next dev"\` directly in package.json - it causes port forwarding issues.
+
+\`\`\`javascript
+// scripts/moldable-dev.mjs
+import { spawn } from 'node:child_process'
+import fsSync from 'node:fs'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import process from 'node:process'
+
+function getArgValue(flagA, flagB) {
+  const idxA = process.argv.indexOf(flagA)
+  if (idxA !== -1 && process.argv[idxA + 1]) return process.argv[idxA + 1]
+  if (flagB) {
+    const idxB = process.argv.indexOf(flagB)
+    if (idxB !== -1 && process.argv[idxB + 1]) return process.argv[idxB + 1]
+  }
+  return null
+}
+
+const port = getArgValue('-p', '--port') ?? process.env.MOLDABLE_PORT ?? process.env.PORT ?? null
+const hasHostname = process.argv.includes('--hostname') || process.argv.includes('-H')
+
+const extraArgs = []
+if (!hasHostname) extraArgs.push('--hostname', '127.0.0.1')
+
+const forwardedArgs = process.argv.slice(2).filter((arg) => arg !== '--')
+
+const instancesFile = path.join(process.cwd(), '.moldable.instances.json')
+let myPid = null
+
+async function readInstances() {
+  try { return JSON.parse(await fs.readFile(instancesFile, 'utf8')) } catch { return [] }
+}
+async function writeInstances(instances) {
+  await fs.writeFile(instancesFile, JSON.stringify(instances, null, 2), 'utf8')
+}
+async function registerInstance(pid, port) {
+  const instances = await readInstances()
+  instances.push({ pid, port: port ? Number(port) : null, startedAt: new Date().toISOString() })
+  await writeInstances(instances)
+}
+async function unregisterInstance(pid) {
+  const instances = await readInstances()
+  const filtered = instances.filter((i) => i.pid !== pid)
+  if (filtered.length === 0) await fs.unlink(instancesFile).catch(() => {})
+  else await writeInstances(filtered)
+}
+async function cleanup() { if (myPid) await unregisterInstance(myPid).catch(() => {}) }
+
+process.on('exit', () => {
+  if (myPid) {
+    try {
+      const instances = JSON.parse(fsSync.readFileSync(instancesFile, 'utf8'))
+      const filtered = instances.filter((i) => i.pid !== myPid)
+      if (filtered.length === 0) fsSync.unlinkSync(instancesFile)
+      else fsSync.writeFileSync(instancesFile, JSON.stringify(filtered, null, 2))
+    } catch {}
+  }
+})
+process.on('SIGINT', async () => { await cleanup(); process.exit(130) })
+process.on('SIGTERM', async () => { await cleanup(); process.exit(143) })
+
+// IMPORTANT: spawn 'next' directly, NOT via pnpm. Pass port via env var.
+const child = spawn('next', ['dev', '--turbopack', ...forwardedArgs, ...extraArgs], {
+  env: {
+    ...process.env,
+    MOLDABLE_APP_ID: 'YOUR_APP_ID', // Replace with actual app ID
+    ...(port ? { MOLDABLE_PORT: port, PORT: port } : {}),
+  },
+  stdio: 'inherit',
+})
+
+if (child.pid) { myPid = child.pid; await registerInstance(child.pid, port) }
+child.on('exit', async (code, signal) => {
+  await cleanup()
+  if (signal) process.kill(process.pid, signal)
+  process.exit(code ?? 0)
+})
+\`\`\`
+
+And in \`package.json\`:
+\`\`\`json
+{
+  "scripts": {
+    "dev": "node ./scripts/moldable-dev.mjs"
+  }
+}
+\`\`\`
 
 ### Registering New Apps
 
@@ -232,7 +325,7 @@ App registration object structure:
   "id": "app-id",
   "name": "App Name",
   "icon": "🚀",
-  "port": 3005, // pick next available port (starting from 3001)
+  "port": 4100, // pick next available port (starting from 4100 to avoid common dev ports)
   "path": "/Users/{username}/.moldable/shared/apps/{app-id}", // MUST be absolute path, expand ~ to $HOME
   "command": "pnpm",
   "args": ["dev"],

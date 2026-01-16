@@ -99,4 +99,6 @@ export const PREFERENCE_KEYS = {
   REASONING_EFFORT: 'reasoningEffort',
   /** Theme preference: 'light' | 'dark' | 'system' */
   THEME: 'theme',
+  /** Whether onboarding has been completed for this workspace */
+  ONBOARDING_COMPLETED: 'onboardingCompleted',
 } as const

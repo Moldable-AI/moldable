@@ -29,7 +29,7 @@ import {
 } from 'ai'
 import { config } from 'dotenv'
 import { strFromU8, unzipSync } from 'fflate'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { IncomingMessage, ServerResponse, createServer } from 'http'
 import { homedir } from 'os'
 import { dirname, join } from 'path'
@@ -638,8 +638,52 @@ async function handleChat(
   }
 }
 
+// Re-read .env file and update process.env with fresh values
+// This allows detecting newly added API keys without restarting the server
+// NOTE: We manually parse instead of using dotenv's config() because
+// config({ override: true }) doesn't reliably update process.env in all cases
+function reloadEnvFile(): void {
+  for (const envPath of envPaths) {
+    if (existsSync(envPath)) {
+      // Clear existing API key values so we detect removal too
+      delete process.env.ANTHROPIC_API_KEY
+      delete process.env.OPENAI_API_KEY
+      delete process.env.OPENROUTER_API_KEY
+
+      // Manually parse and set env vars
+      try {
+        const content = readFileSync(envPath, 'utf-8')
+        for (const line of content.split('\n')) {
+          const trimmed = line.trim()
+          // Skip comments and empty lines
+          if (!trimmed || trimmed.startsWith('#')) continue
+          const eqIndex = trimmed.indexOf('=')
+          if (eqIndex > 0) {
+            const key = trimmed.slice(0, eqIndex).trim()
+            const value = trimmed.slice(eqIndex + 1).trim()
+            // Only set API key env vars we care about
+            if (
+              key === 'ANTHROPIC_API_KEY' ||
+              key === 'OPENAI_API_KEY' ||
+              key === 'OPENROUTER_API_KEY'
+            ) {
+              process.env[key] = value
+            }
+          }
+        }
+      } catch (err) {
+        console.error(`Failed to read env file ${envPath}:`, err)
+      }
+      break
+    }
+  }
+}
+
 // Handle health check
 function handleHealth(res: ServerResponse): void {
+  // Re-read .env to pick up newly added API keys
+  reloadEnvFile()
+
   sendJson(res, {
     status: 'ok',
     version: '0.1.0',

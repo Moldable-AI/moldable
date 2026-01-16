@@ -17,7 +17,7 @@ type KeyProvider = 'openrouter' | 'anthropic' | 'openai' | null
 interface ApiKeyDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSuccess: () => void
+  onSuccess: () => void | Promise<void>
 }
 
 /** Detect the provider from an API key based on its prefix */
@@ -28,15 +28,6 @@ function detectKeyProvider(key: string): KeyProvider {
   if (trimmed.startsWith('sk-proj-') || trimmed.startsWith('sk-'))
     return 'openai'
   return null
-}
-
-const providerInfo: Record<
-  Exclude<KeyProvider, null>,
-  { name: string; color: string }
-> = {
-  openrouter: { name: 'OpenRouter', color: 'text-purple-500' },
-  anthropic: { name: 'Anthropic', color: 'text-orange-500' },
-  openai: { name: 'OpenAI', color: 'text-green-500' },
 }
 
 export function ApiKeyDialog({
@@ -61,18 +52,27 @@ export function ApiKeyDialog({
     try {
       await invoke<string>('save_api_key', { apiKey: apiKey.trim() })
       setSuccess(true)
+      setIsSaving(false)
 
-      // Brief delay to show success, then close and trigger callback
-      setTimeout(() => {
-        onSuccess()
-        onOpenChange(false)
-        // Reset state
-        setApiKey('')
-        setSuccess(false)
-      }, 500)
+      // Brief delay to show success and ensure file is fully written,
+      // then trigger health refresh and close dialog
+      setTimeout(async () => {
+        try {
+          // Wait for health check to complete before closing
+          // This ensures the AI server picks up the new key
+          await onSuccess()
+        } catch (err) {
+          console.error('Error refreshing health after API key save:', err)
+        } finally {
+          // Always close and reset state
+          onOpenChange(false)
+          setApiKey('')
+          setSuccess(false)
+        }
+      }, 800)
     } catch (err) {
       console.error('Failed to save API key:', err)
-      setError(err instanceof Error ? err.message : 'Failed to save API key')
+      setError(err instanceof Error ? err.message : String(err))
       setIsSaving(false)
     }
   }, [apiKey, isValidKey, onSuccess, onOpenChange])
@@ -103,31 +103,22 @@ export function ApiKeyDialog({
 
         {!success ? (
           <div className="flex flex-col gap-4 pt-2">
-            <div className="relative">
-              <Input
-                type="password"
-                placeholder="OpenRouter, Anthropic, or OpenAI API key"
-                value={apiKey}
-                onChange={(e) => {
-                  setApiKey(e.target.value)
-                  setError(null)
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && isValidKey) {
-                    handleSave()
-                  }
-                }}
-                className="font-mono text-sm"
-                autoFocus
-              />
-              {detectedProvider && (
-                <span
-                  className={`absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium ${providerInfo[detectedProvider].color}`}
-                >
-                  {providerInfo[detectedProvider].name}
-                </span>
-              )}
-            </div>
+            <Input
+              type="password"
+              placeholder="OpenRouter, Anthropic, or OpenAI API key"
+              value={apiKey}
+              onChange={(e) => {
+                setApiKey(e.target.value)
+                setError(null)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && isValidKey) {
+                  handleSave()
+                }
+              }}
+              className="font-mono text-sm"
+              autoFocus
+            />
 
             {error && <p className="text-xs text-red-500">{error}</p>}
 

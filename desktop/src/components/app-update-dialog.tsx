@@ -1,5 +1,4 @@
 import { Download, RefreshCw, X } from 'lucide-react'
-import { useEffect } from 'react'
 import { Button } from '@moldable-ai/ui'
 import { cn } from '../lib/utils'
 import { useAppUpdate } from '../hooks/use-app-update'
@@ -18,19 +17,7 @@ export function AppUpdateDialog() {
     error,
     downloadAndInstall,
     dismiss,
-    simulateUpdate,
   } = useAppUpdate()
-
-  // Expose simulateUpdate to window in development for testing
-  useEffect(() => {
-    if (import.meta.env.DEV) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(window as any).__simulateAppUpdate = simulateUpdate
-      console.log(
-        '[dev] Run window.__simulateAppUpdate() in console to test update dialog',
-      )
-    }
-  }, [simulateUpdate])
 
   if (!available || !update) return null
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { AlertCircle, Minimize2, Plus } from 'lucide-react'
+import { AlertCircle, MessageCircle, Minimize2, Plus } from 'lucide-react'
 import {
   type ChangeEvent,
   type FormEvent,
@@ -78,6 +78,10 @@ export interface ChatPanelProps {
   isExpanded: boolean
   /** Toggle expanded state */
   onExpandedChange: (expanded: boolean) => void
+  /** Whether the panel is minimized (hidden below fold with only flap visible) */
+  isMinimized?: boolean
+  /** Toggle minimized state */
+  onMinimizedChange?: (minimized: boolean) => void
   /** Custom class name */
   className?: string
   /** Error from chat request */
@@ -113,6 +117,8 @@ export function ChatPanel({
   welcomeMessage,
   isExpanded,
   onExpandedChange,
+  isMinimized = false,
+  onMinimizedChange,
   className,
   error,
   missingApiKey,
@@ -205,11 +211,24 @@ export function ChatPanel({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [isResponding, isExpanded, handleNewChat])
 
+  // Handle clicking the minimized flap
+  const handleFlapClick = useCallback(() => {
+    onMinimizedChange?.(false)
+  }, [onMinimizedChange])
+
+  // Handle minimize button - now goes to minimized state
+  const handleMinimize = useCallback(() => {
+    if (isExpanded) {
+      onExpandedChange(false)
+    }
+    onMinimizedChange?.(true)
+  }, [isExpanded, onExpandedChange, onMinimizedChange])
+
   return (
     <>
       {/* Backdrop when expanded */}
       <AnimatePresence>
-        {isExpanded && (
+        {isExpanded && !isMinimized && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -221,15 +240,45 @@ export function ChatPanel({
         )}
       </AnimatePresence>
 
+      {/* Minimized flap - small tab peeking from bottom */}
+      <AnimatePresence>
+        {isMinimized && (
+          <motion.div
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 20, opacity: 0 }}
+            transition={{ type: 'tween', duration: 0.2, ease: 'easeOut' }}
+            className="fixed bottom-0 left-[calc(50%+var(--sidebar-width,0px)/2)] z-50 -translate-x-1/2"
+          >
+            <button
+              onClick={handleFlapClick}
+              className={cn(
+                'bg-background/95 hover:bg-background group flex cursor-pointer items-center gap-2 rounded-t-xl border border-b-0 px-4 py-2 shadow-lg backdrop-blur transition-colors',
+                'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <MessageCircle className="size-4" />
+              <span className="text-sm font-medium">Chat</span>
+              <span className="bg-muted text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary rounded px-1.5 py-0.5 text-xs transition-colors">
+                ⌘K
+              </span>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Chat panel */}
       <motion.div
         initial={false}
         animate={{
           width: isExpanded ? 'min(90vw, 640px)' : '400px',
+          y: isMinimized ? 'calc(100% + 24px)' : 0,
+          opacity: isMinimized ? 0 : 1,
         }}
-        transition={{ type: 'tween', duration: 0.2, ease: 'easeOut' }}
+        transition={{ type: 'tween', duration: 0.25, ease: 'easeOut' }}
         className={cn(
           'pointer-events-none fixed bottom-6 left-[calc(50%+var(--sidebar-width,0px)/2)] z-50 flex -translate-x-1/2 justify-center',
+          isMinimized && 'pointer-events-none',
           className,
         )}
       >
@@ -328,7 +377,7 @@ export function ChatPanel({
                       <Button
                         variant="ghost"
                         size="icon-sm"
-                        onClick={() => onExpandedChange(false)}
+                        onClick={handleMinimize}
                         className="text-muted-foreground hover:text-foreground"
                       >
                         <Minimize2 className="size-4" />

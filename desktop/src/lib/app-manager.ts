@@ -163,9 +163,20 @@ export async function autoStartApp(app: AppConfig): Promise<AutoStartResult> {
 }
 
 // Get all registered apps from config
-export async function getRegisteredApps(): Promise<AppConfig[]> {
+export async function getRegisteredApps(
+  workspaceId?: string,
+): Promise<AppConfig[]> {
   if (!isTauri()) {
     return []
+  }
+
+  // If workspace ID provided, use the specific command (for onboarding)
+  if (workspaceId) {
+    const apps = await invoke<RegisteredApp[]>(
+      'get_registered_apps_for_workspace',
+      { workspaceId },
+    )
+    return apps.map(toAppConfig)
   }
 
   const apps = await invoke<RegisteredApp[]>('get_registered_apps')
