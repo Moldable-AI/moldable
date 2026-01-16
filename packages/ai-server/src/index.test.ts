@@ -323,7 +323,9 @@ describe('AI Server', () => {
       })
     })
 
-    it('should validate API key requirements based on model', () => {
+    it('should validate API key requirements based on model with OpenRouter fallback', () => {
+      // This mirrors the validation logic in the AI server
+      // Anthropic/OpenAI models can use direct keys OR fall back to OpenRouter
       const validateApiKeys = (
         model: string,
         apiKeys: {
@@ -334,53 +336,109 @@ describe('AI Server', () => {
       ): { valid: boolean; error?: string } => {
         const isAnthropic = model.startsWith('anthropic/')
         const isOpenRouter = model.startsWith('openrouter/')
+        const isOpenAI = model.startsWith('openai/')
 
-        if (isAnthropic && !apiKeys.anthropicApiKey) {
-          return { valid: false, error: 'ANTHROPIC_API_KEY not configured' }
+        // Anthropic models: need Anthropic key OR OpenRouter
+        if (
+          isAnthropic &&
+          !apiKeys.anthropicApiKey &&
+          !apiKeys.openrouterApiKey
+        ) {
+          return {
+            valid: false,
+            error: 'ANTHROPIC_API_KEY or OPENROUTER_API_KEY required',
+          }
         }
+        // OpenRouter-native models: need OpenRouter key
         if (isOpenRouter && !apiKeys.openrouterApiKey) {
           return { valid: false, error: 'OPENROUTER_API_KEY not configured' }
         }
-        if (!isAnthropic && !isOpenRouter && !apiKeys.openaiApiKey) {
-          return { valid: false, error: 'OPENAI_API_KEY not configured' }
+        // OpenAI models: need OpenAI key OR OpenRouter
+        if (isOpenAI && !apiKeys.openaiApiKey && !apiKeys.openrouterApiKey) {
+          return {
+            valid: false,
+            error: 'OPENAI_API_KEY or OPENROUTER_API_KEY required',
+          }
         }
         return { valid: true }
       }
 
-      // Anthropic model without key
-      expect(validateApiKeys('anthropic/claude-3', {})).toEqual({
+      // Anthropic model without any key
+      expect(validateApiKeys('anthropic/claude-opus-4-5', {})).toEqual({
         valid: false,
-        error: 'ANTHROPIC_API_KEY not configured',
+        error: 'ANTHROPIC_API_KEY or OPENROUTER_API_KEY required',
       })
 
-      // Anthropic model with key
+      // Anthropic model with direct Anthropic key
       expect(
-        validateApiKeys('anthropic/claude-3', { anthropicApiKey: 'key' }),
+        validateApiKeys('anthropic/claude-opus-4-5', {
+          anthropicApiKey: 'key',
+        }),
+      ).toEqual({
+        valid: true,
+      })
+
+      // Anthropic model with OpenRouter key (fallback)
+      expect(
+        validateApiKeys('anthropic/claude-opus-4-5', {
+          openrouterApiKey: 'key',
+        }),
+      ).toEqual({
+        valid: true,
+      })
+
+      // Anthropic model with both keys (prefers direct, but valid either way)
+      expect(
+        validateApiKeys('anthropic/claude-opus-4-5', {
+          anthropicApiKey: 'key',
+          openrouterApiKey: 'key',
+        }),
       ).toEqual({
         valid: true,
       })
 
       // OpenRouter model without key
-      expect(validateApiKeys('openrouter/model', {})).toEqual({
+      expect(validateApiKeys('openrouter/minimax/minimax-m2.1', {})).toEqual({
         valid: false,
         error: 'OPENROUTER_API_KEY not configured',
       })
 
       // OpenRouter model with key
       expect(
-        validateApiKeys('openrouter/model', { openrouterApiKey: 'key' }),
+        validateApiKeys('openrouter/minimax/minimax-m2.1', {
+          openrouterApiKey: 'key',
+        }),
       ).toEqual({
         valid: true,
       })
 
-      // OpenAI model without key
-      expect(validateApiKeys('openai/gpt-4', {})).toEqual({
+      // OpenAI model without any key
+      expect(validateApiKeys('openai/gpt-5.2', {})).toEqual({
         valid: false,
-        error: 'OPENAI_API_KEY not configured',
+        error: 'OPENAI_API_KEY or OPENROUTER_API_KEY required',
       })
 
-      // OpenAI model with key
-      expect(validateApiKeys('openai/gpt-4', { openaiApiKey: 'key' })).toEqual({
+      // OpenAI model with direct OpenAI key
+      expect(
+        validateApiKeys('openai/gpt-5.2', { openaiApiKey: 'key' }),
+      ).toEqual({
+        valid: true,
+      })
+
+      // OpenAI model with OpenRouter key (fallback)
+      expect(
+        validateApiKeys('openai/gpt-5.2', { openrouterApiKey: 'key' }),
+      ).toEqual({
+        valid: true,
+      })
+
+      // OpenAI model with both keys (prefers direct, but valid either way)
+      expect(
+        validateApiKeys('openai/gpt-5.2', {
+          openaiApiKey: 'key',
+          openrouterApiKey: 'key',
+        }),
+      ).toEqual({
         valid: true,
       })
     })

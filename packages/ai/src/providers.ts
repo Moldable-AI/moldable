@@ -89,6 +89,25 @@ type ApiKeys = {
 }
 
 /**
+ * Build config for OpenRouter-routed models
+ */
+function buildOpenRouterConfig(
+  apiKey: string,
+  modelId: string,
+  config: ModelConfig,
+): ProviderConfig {
+  const client = getOpenRouterClient(apiKey)
+  return {
+    model: client(modelId),
+    temperature: config.temperature,
+    isReasoning: config.isReasoning,
+    providerOptions: config.isReasoning
+      ? { reasoning: { enabled: true } }
+      : undefined,
+  }
+}
+
+/**
  * Get the provider configuration for a given LLM provider
  */
 export function getProviderConfig(
@@ -97,101 +116,90 @@ export function getProviderConfig(
   reasoningEffort: ReasoningEffort = 'medium',
 ): ProviderConfig {
   const config = MODEL_CONFIG[provider]
-  const isAnthropic = provider.startsWith('anthropic/')
-  const isOpenRouter = provider.startsWith('openrouter/')
 
   // Validate that config exists for this provider
   if (!config) {
     throw new Error(`Unknown model: ${provider}. No configuration found.`)
   }
 
+  const isAnthropic = provider.startsWith('anthropic/')
+  const isOpenRouter = provider.startsWith('openrouter/')
+
+  // Anthropic models: prefer direct API, fall back to OpenRouter
   if (isAnthropic) {
-    if (!apiKeys.anthropicApiKey) {
-      throw new Error('Anthropic API key is required')
-    }
+    if (apiKeys.anthropicApiKey) {
+      const client = getAnthropicClient(apiKeys.anthropicApiKey)
+      const modelId = provider.replace('anthropic/', '')
+      const anthropicEffort = (
+        ['low', 'medium', 'high', 'xhigh'].includes(reasoningEffort)
+          ? reasoningEffort
+          : 'medium'
+      ) as AnthropicReasoningEffort
 
-    const client = getAnthropicClient(apiKeys.anthropicApiKey)
-    const modelId = provider.replace('anthropic/', '')
-
-    // Map reasoning effort to budget tokens (default to 'medium' if not a valid Anthropic effort)
-    const anthropicEffort = (
-      ['low', 'medium', 'high', 'xhigh'].includes(reasoningEffort)
-        ? reasoningEffort
-        : 'medium'
-    ) as AnthropicReasoningEffort
-    const budgetTokens = ANTHROPIC_BUDGET_TOKENS[anthropicEffort]
-
-    return {
-      model: client(modelId),
-      // Anthropic doesn't allow temperature when thinking is enabled
-      temperature: config.isReasoning ? undefined : config.temperature,
-      isReasoning: config.isReasoning,
-      providerOptions: config.isReasoning
-        ? {
-            anthropic: {
-              thinking: {
-                type: 'enabled',
-                budgetTokens,
+      return {
+        model: client(modelId),
+        // Anthropic doesn't allow temperature when thinking is enabled
+        temperature: config.isReasoning ? undefined : config.temperature,
+        isReasoning: config.isReasoning,
+        providerOptions: config.isReasoning
+          ? {
+              anthropic: {
+                thinking: {
+                  type: 'enabled',
+                  budgetTokens: ANTHROPIC_BUDGET_TOKENS[anthropicEffort],
+                },
               },
-            },
-          }
-        : undefined,
+            }
+          : undefined,
+      }
     }
+
+    if (apiKeys.openrouterApiKey) {
+      // Map internal ID to OpenRouter format: 'anthropic/claude-opus-4-5' -> 'anthropic/claude-opus-4.5'
+      const modelId = provider.replace(/-(\d+)-(\d+)$/, '-$1.$2')
+      return buildOpenRouterConfig(apiKeys.openrouterApiKey, modelId, config)
+    }
+
+    throw new Error('Anthropic API key or OpenRouter API key is required')
   }
 
+  // OpenRouter-native models: require OpenRouter key
   if (isOpenRouter) {
     if (!apiKeys.openrouterApiKey) {
       throw new Error('OpenRouter API key is required')
     }
-
-    const client = getOpenRouterClient(apiKeys.openrouterApiKey)
-    // OpenRouter model ID is everything after 'openrouter/'
-    // e.g., 'openrouter/minimax/minimax-m2.1' -> 'minimax/minimax-m2.1'
+    // Strip 'openrouter/' prefix: 'openrouter/minimax/minimax-m2.1' -> 'minimax/minimax-m2.1'
     const modelId = provider.replace('openrouter/', '')
+    return buildOpenRouterConfig(apiKeys.openrouterApiKey, modelId, config)
+  }
 
-    // Build provider options
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const providerOptions: any = {}
-
-    // Add reasoning if enabled - OpenRouter normalizes to the correct format for each model
-    if (config.isReasoning) {
-      providerOptions.reasoning = { enabled: true }
-    }
+  // OpenAI models: prefer direct API, fall back to OpenRouter
+  if (apiKeys.openaiApiKey) {
+    const client = getOpenAIClient(apiKeys.openaiApiKey)
+    const modelId = provider.replace('openai/', '')
 
     return {
-      model: client(modelId),
+      model: client.responses(modelId),
       temperature: config.temperature,
       isReasoning: config.isReasoning,
-      providerOptions:
-        Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
+      providerOptions: {
+        openai: {
+          store: false,
+          ...(config.isReasoning
+            ? {
+                reasoningSummary: 'auto',
+                reasoningEffort: reasoningEffort as OpenAIReasoningEffort,
+              }
+            : {}),
+        },
+      },
     }
   }
 
-  // OpenAI
-  if (!apiKeys.openaiApiKey) {
-    throw new Error('OpenAI API key is required')
+  if (apiKeys.openrouterApiKey) {
+    // OpenRouter uses full model ID for OpenAI models: 'openai/gpt-5.2'
+    return buildOpenRouterConfig(apiKeys.openrouterApiKey, provider, config)
   }
 
-  const client = getOpenAIClient(apiKeys.openaiApiKey)
-  const modelId = provider.replace('openai/', '')
-
-  // Use the reasoning effort directly for OpenAI (all valid values work)
-  const openaiEffort = reasoningEffort as OpenAIReasoningEffort
-
-  return {
-    model: client.responses(modelId),
-    temperature: config.temperature,
-    isReasoning: config.isReasoning,
-    providerOptions: {
-      openai: {
-        store: false,
-        ...(config.isReasoning
-          ? {
-              reasoningSummary: 'auto',
-              reasoningEffort: openaiEffort,
-            }
-          : {}),
-      },
-    },
-  }
+  throw new Error('OpenAI API key or OpenRouter API key is required')
 }

@@ -1,11 +1,18 @@
-import { AlertCircle, Check, Copy, Play, RefreshCw, X } from 'lucide-react'
+import {
+  AlertCircle,
+  Check,
+  Copy,
+  MessageSquare,
+  RefreshCw,
+  Terminal,
+} from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTheme } from '@moldable-ai/ui'
 import { getAppEnvRequirements } from '@/lib/app-manager'
-import { cn } from '@/lib/utils'
 import { useAppStatus } from '@/hooks/use-app-status'
 import type { AppConfig } from '../app'
 import { AppEnvDialog } from './app-env-dialog'
+import { AppLogs } from './app-logs'
 import { PortConflictDialog } from './port-conflict-dialog'
 import { open } from '@tauri-apps/plugin-shell'
 
@@ -13,12 +20,19 @@ interface AppViewProps {
   app: AppConfig
   workspaceId: string
   reloadKey?: number
+  onSuggestChatInput?: (text: string) => void
 }
 
-export function AppView({ app, workspaceId, reloadKey = 0 }: AppViewProps) {
+export function AppView({
+  app,
+  workspaceId,
+  reloadKey = 0,
+  onSuggestChatInput,
+}: AppViewProps) {
   const [isLoading, setIsLoading] = useState(true)
-  const [copied, setCopied] = useState(false)
   const [showEnvDialog, setShowEnvDialog] = useState(false)
+  const [showLogs, setShowLogs] = useState(false)
+  const [copiedError, setCopiedError] = useState(false)
   const {
     state,
     error,
@@ -26,7 +40,6 @@ export function AppView({ app, workspaceId, reloadKey = 0 }: AppViewProps) {
     actualPort,
     portConflict,
     start,
-    clearError,
     killAndStart,
     startOnAlternatePort,
     dismissPortConflict,
@@ -103,17 +116,22 @@ export function AppView({ app, workspaceId, reloadKey = 0 }: AppViewProps) {
     return () => window.removeEventListener('message', handleMessage)
   }, [])
 
-  const handleCopyLogs = async () => {
-    const logText =
-      logs.length > 0 ? logs.join('\n') : error || 'No logs available'
-    await navigator.clipboard.writeText(logText)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
+  const handleCopyError = useCallback(async () => {
+    if (!error) return
+    await navigator.clipboard.writeText(error)
+    setCopiedError(true)
+    setTimeout(() => setCopiedError(false), 2000)
+  }, [error])
 
-  const handleDismissError = () => {
-    clearError()
-  }
+  const handleFixInChat = useCallback(() => {
+    if (!error || !onSuggestChatInput) return
+    const message = `For the current app, we get this error on launch:
+<begin error>
+${error}
+</end error>
+Fix it, verify, and then give a concise explanation in simple terms.`
+    onSuggestChatInput(message)
+  }, [error, onSuggestChatInput])
 
   const handleEnvDialogClose = useCallback(() => {
     setShowEnvDialog(false)
@@ -186,90 +204,82 @@ export function AppView({ app, workspaceId, reloadKey = 0 }: AppViewProps) {
 
         {/* Error state */}
         {isError && (
-          <div className="bg-card absolute inset-0 z-10 flex flex-col">
-            <div className="flex flex-1 flex-col items-center justify-center p-8">
-              <div className="bg-status-error/10 mb-4 flex size-16 items-center justify-center rounded-full">
-                <AlertCircle className="text-status-error size-8" />
-              </div>
-              <h2 className="mb-2 text-xl font-semibold">{app.name}</h2>
-              <p className="text-muted-foreground mb-4 text-center">
-                Failed to start on port {runningPort}
-              </p>
-
-              {/* Error message */}
-              {error && (
-                <div className="border-status-error/30 bg-status-error/5 mb-4 max-w-lg rounded-lg border p-4">
-                  <pre className="text-status-error whitespace-pre-wrap text-sm">
-                    {error}
-                  </pre>
-                </div>
-              )}
-
-              {/* Action buttons */}
-              <div className="flex gap-3">
-                <button
-                  onClick={() => start()}
-                  className="bg-primary text-primary-foreground hover:bg-primary/90 flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition"
-                >
-                  <Play className="size-4" />
-                  Try Again
-                </button>
-                <button
-                  onClick={handleDismissError}
-                  className="bg-muted text-muted-foreground hover:bg-muted/80 flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition"
-                >
-                  <X className="size-4" />
-                  Dismiss
-                </button>
-              </div>
+          <div className="bg-card absolute inset-0 z-10 flex flex-col items-center justify-center p-8">
+            <div className="bg-status-error/10 mb-3 flex size-12 items-center justify-center rounded-full">
+              <AlertCircle className="text-status-error size-6" />
             </div>
+            <h2 className="mb-1 text-lg font-semibold">{app.name}</h2>
+            <p className="text-muted-foreground mb-3 text-center text-sm">
+              Failed to start on port {runningPort}
+            </p>
 
-            {/* Logs panel */}
-            {logs.length > 0 && (
-              <div className="border-border bg-muted/30 border-t">
-                <div className="flex items-center justify-between px-4 py-2">
-                  <span className="text-muted-foreground text-xs font-medium">
-                    Process Output ({logs.length} lines)
-                  </span>
+            {/* Error message - scrollable with copy button */}
+            {error && (
+              <div className="border-status-error/30 bg-status-error/5 mb-4 w-full max-w-2xl overflow-hidden rounded-lg border">
+                <div className="border-status-error/20 flex items-center justify-end border-b px-2 py-1">
                   <button
-                    onClick={handleCopyLogs}
-                    className="text-muted-foreground hover:bg-muted hover:text-foreground flex cursor-pointer items-center gap-1 rounded px-2 py-1 text-xs transition"
+                    onClick={handleCopyError}
+                    className="text-status-error/70 hover:text-status-error flex cursor-pointer items-center gap-1 rounded px-2 py-1 text-xs transition"
                   >
-                    {copied ? (
+                    {copiedError ? (
                       <>
                         <Check className="size-3" />
-                        Copied!
+                        Copied
                       </>
                     ) : (
                       <>
                         <Copy className="size-3" />
-                        Copy Logs
+                        Copy
                       </>
                     )}
                   </button>
                 </div>
-                <div className="border-border bg-card max-h-48 overflow-auto border-t p-4">
-                  <pre className="text-muted-foreground font-mono text-xs leading-relaxed">
-                    {logs.slice(-50).map((line, i) => (
-                      <div
-                        key={i}
-                        className={cn(
-                          line.includes('[stderr]') && 'text-status-error',
-                          (line.includes('error') ||
-                            line.includes('Error') ||
-                            line.includes('ERROR')) &&
-                            'text-status-error font-medium',
-                        )}
-                      >
-                        {line}
-                      </div>
-                    ))}
+                <div className="max-h-48 overflow-auto p-3">
+                  <pre className="text-status-error whitespace-pre-wrap font-mono text-xs">
+                    {error}
                   </pre>
                 </div>
               </div>
             )}
+
+            {/* Action buttons */}
+            <div className="flex gap-2">
+              {onSuggestChatInput && (
+                <button
+                  onClick={handleFixInChat}
+                  className="bg-primary text-primary-foreground hover:bg-primary/90 flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition"
+                >
+                  <MessageSquare className="size-4" />
+                  Fix in chat
+                </button>
+              )}
+              <button
+                onClick={() => start()}
+                className="bg-muted text-muted-foreground hover:bg-muted/80 flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition"
+              >
+                <RefreshCw className="size-4" />
+                Try Again
+              </button>
+              {logs.length > 0 && (
+                <button
+                  onClick={() => setShowLogs(true)}
+                  className="bg-muted text-muted-foreground hover:bg-muted/80 flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition"
+                >
+                  <Terminal className="size-4" />
+                  View Logs
+                </button>
+              )}
+            </div>
           </div>
         )}
+
+        {/* Logs modal */}
+        <AppLogs
+          appId={app.id}
+          appName={app.name}
+          isOpen={showLogs}
+          onClose={() => setShowLogs(false)}
+        />
 
         {/* Stopped state - will auto-start */}
         {isStopped && (

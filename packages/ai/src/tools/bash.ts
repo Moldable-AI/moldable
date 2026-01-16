@@ -340,9 +340,9 @@ async function executeCommand(
   command: string,
   options: {
     cwd?: string
-    timeout?: number
     maxBuffer?: number
     useSandbox?: boolean
+    abortSignal?: AbortSignal
   },
 ): Promise<{
   success: boolean
@@ -357,9 +357,9 @@ async function executeCommand(
 }> {
   const {
     cwd,
-    timeout = 30000,
     maxBuffer = 1024 * 1024,
     useSandbox = true,
+    abortSignal,
   } = options
 
   let finalCommand = command
@@ -385,7 +385,6 @@ async function executeCommand(
     let stdout = ''
     let stderr = ''
     let killed = false
-    let timeoutId: NodeJS.Timeout | undefined
 
     const child = spawn(finalCommand, {
       shell: '/bin/bash',
@@ -399,18 +398,25 @@ async function executeCommand(
       },
     })
 
-    // Set up timeout
-    if (timeout > 0) {
-      timeoutId = setTimeout(() => {
-        killed = true
-        child.kill('SIGTERM')
-        // Force kill after 5s if SIGTERM doesn't work
-        setTimeout(() => {
-          if (!child.killed) {
-            child.kill('SIGKILL')
-          }
-        }, 5000)
-      }, timeout)
+    // Handle abort signal - kill the process when user aborts the chat
+    const abortHandler = () => {
+      killed = true
+      child.kill('SIGTERM')
+      // Force kill after 5s if SIGTERM doesn't work
+      setTimeout(() => {
+        if (!child.killed) {
+          child.kill('SIGKILL')
+        }
+      }, 5000)
+    }
+
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        // Already aborted before we started
+        abortHandler()
+      } else {
+        abortSignal.addEventListener('abort', abortHandler, { once: true })
+      }
     }
 
     // Collect stdout
@@ -431,7 +437,10 @@ async function executeCommand(
 
     // Handle completion
     child.on('close', (code, signal) => {
-      if (timeoutId) clearTimeout(timeoutId)
+      // Clean up abort listener
+      if (abortSignal) {
+        abortSignal.removeEventListener('abort', abortHandler)
+      }
 
       // Annotate stderr with sandbox failures if applicable
       if (isSandboxed && stderr) {
@@ -442,20 +451,27 @@ async function executeCommand(
       }
 
       resolve({
-        success: code === 0,
+        success: code === 0 && !killed,
         command,
         stdout: stdout.trim() || undefined,
         stderr: stderr.trim() || undefined,
         exitCode: code ?? undefined,
         killed,
         signal: signal ?? undefined,
-        error: code !== 0 ? `Command exited with code ${code}` : undefined,
+        error: killed
+          ? 'Command was aborted'
+          : code !== 0
+            ? `Command exited with code ${code}`
+            : undefined,
         sandboxed: isSandboxed,
       })
     })
 
     child.on('error', (error) => {
-      if (timeoutId) clearTimeout(timeoutId)
+      // Clean up abort listener
+      if (abortSignal) {
+        abortSignal.removeEventListener('abort', abortHandler)
+      }
       resolve({
         success: false,
         command,
@@ -474,7 +490,6 @@ async function executeCommand(
 export function createBashTools(
   options: {
     cwd?: string
-    timeout?: number
     maxBuffer?: number
     sandboxConfig?: Partial<SandboxRuntimeConfig>
     disableSandbox?: boolean
@@ -482,7 +497,6 @@ export function createBashTools(
 ) {
   const {
     cwd,
-    timeout = 30000,
     maxBuffer = 1024 * 1024,
     sandboxConfig,
     disableSandbox = false,
@@ -524,18 +538,27 @@ export function createBashTools(
       .describe(
         'Optional working directory for the command. Defaults to the configured base directory.',
       ),
+    sandbox: z
+      .boolean()
+      .optional()
+      .describe(
+        'Whether to run the command in a sandbox (default: true). Set to false ONLY for package manager install commands (pnpm install, npm install, yarn add, etc.) that need network access to download packages. Never disable sandbox for other commands.',
+      ),
   })
 
   return {
     runCommand: tool({
-      description: `Execute a bash command in a sandboxed environment with filesystem and network restrictions. The command runs with a ${timeout / 1000}s timeout. Network access is limited to package registries and allowed APIs. Sensitive paths like ~/.ssh are protected.`,
+      description:
+        'Execute a bash command. By default runs in a sandboxed environment with filesystem and network restrictions. For package manager installs (pnpm/npm/yarn/bun install/add), set sandbox=false to allow network access to package registries.',
       inputSchema: zodSchema(runCommandSchema),
-      execute: async (input) => {
+      execute: async (input, { abortSignal }) => {
+        // Default sandbox=true, but allow explicit override for package installs
+        const useSandbox = input.sandbox !== false && !disableSandbox
         return executeCommand(input.command, {
           cwd: input.workingDirectory || cwd,
-          timeout,
           maxBuffer,
-          useSandbox: !disableSandbox,
+          useSandbox,
+          abortSignal,
         })
       },
     }),

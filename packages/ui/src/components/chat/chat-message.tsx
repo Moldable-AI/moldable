@@ -19,6 +19,9 @@ import { AnimatePresence, motion } from 'framer-motion'
 
 const DEFAULT_ACTIONS_LABEL = 'Thinking'
 
+// OpenRouter sends these for encrypted reasoning msgs
+const stripRedacted = (text: string) => text.replace(/\[REDACTED\]/g, '').trim()
+
 // Simplified message type for Moldable (subset of AI SDK UIMessage)
 export type ChatMessagePart =
   | { type: 'text'; text: string }
@@ -198,17 +201,17 @@ function PureMessage({
 
       if (part.type === 'reasoning') {
         const full = part.text ?? ''
-        const trimmedFull = full.trim()
-        if (trimmedFull.length === 0) {
+        const cleaned = stripRedacted(full)
+        if (cleaned.length === 0) {
           continue
         }
 
         const group = ensureThinkingGroup()
 
         // Extract title from markdown **title** or use first line
-        const markdownTitleMatch = full.match(/\*\*([^*]+)\*\*/)
+        const markdownTitleMatch = cleaned.match(/\*\*([^*]+)\*\*/)
         const candidateTitle = markdownTitleMatch?.[1]
-        const trimmed = trimmedFull
+        const trimmed = cleaned
         const firstLine = trimmed.split(/\n+/)[0]
         const extractedTitle =
           candidateTitle || firstLine?.slice(0, 50) || DEFAULT_ACTIONS_LABEL

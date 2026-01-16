@@ -44,7 +44,6 @@ describe('createBashTools', () => {
     // Disable sandbox for unit tests to avoid system dependencies
     tools = createBashTools({
       cwd: tempDir,
-      timeout: 10000,
       disableSandbox: true,
     })
   })
@@ -108,20 +107,28 @@ describe('createBashTools', () => {
       )
     })
 
-    it('handles command timeout', async () => {
-      const shortTimeoutTools = createBashTools({
-        cwd: tempDir,
-        timeout: 100,
-        disableSandbox: true,
-      })
+    it('handles abort signal to stop long-running commands', async () => {
+      const abortController = new AbortController()
 
-      const result = await execCommand(shortTimeoutTools, {
-        command: 'sleep 10',
-      })
+      // Start a long-running command
+      const resultPromise = tools.runCommand.execute!(
+        { command: 'sleep 10' },
+        {
+          toolCallId: 'test',
+          messages: [],
+          abortSignal: abortController.signal,
+        },
+      ) as Promise<CommandResult>
+
+      // Abort after a short delay
+      setTimeout(() => abortController.abort(), 100)
+
+      const result = await resultPromise
 
       expect(result).toMatchObject({
         success: false,
         killed: true,
+        error: 'Command was aborted',
       })
     })
 
@@ -233,7 +240,7 @@ describe('createBashTools with sandbox', () => {
     }
 
     // Create tools with sandbox enabled (default)
-    const tools = createBashTools({ cwd: tempDir, timeout: 5000 })
+    const tools = createBashTools({ cwd: tempDir })
 
     // Run a simple command - this should trigger sandbox initialization
     const result = await execCommand(tools, { command: 'echo "sandboxed"' })
@@ -255,7 +262,7 @@ describe('createBashTools with sandbox', () => {
     // Reset to unknown state
     await resetSandbox()
 
-    const tools = createBashTools({ cwd: tempDir, timeout: 5000 })
+    const tools = createBashTools({ cwd: tempDir })
 
     // Should still work even if sandbox init fails
     const result = await execCommand(tools, { command: 'echo "works"' })
@@ -275,7 +282,7 @@ describe('createBashTools with sandbox', () => {
     const moldableDir = path.join(homeDir, '.moldable')
     const testFile = path.join(moldableDir, 'sandbox-write-test.txt')
 
-    const tools = createBashTools({ cwd: tempDir, timeout: 10000 })
+    const tools = createBashTools({ cwd: tempDir })
 
     // Write to ~/.moldable/ (should be in allowWrite)
     const result = await execCommand(tools, {
@@ -308,7 +315,7 @@ describe('createBashTools with sandbox', () => {
     )
     const testFile = path.join(nestedPath, 'sandbox-nested-test.txt')
 
-    const tools = createBashTools({ cwd: tempDir, timeout: 10000 })
+    const tools = createBashTools({ cwd: tempDir })
 
     // Create nested directory and write file
     const mkdirResult = await execCommand(tools, {
@@ -342,7 +349,7 @@ describe('createBashTools with sandbox', () => {
     const cacheDir = path.join(homeDir, '.cache', 'moldable-sandbox-test')
     const testFile = path.join(cacheDir, 'test.txt')
 
-    const tools = createBashTools({ cwd: tempDir, timeout: 10000 })
+    const tools = createBashTools({ cwd: tempDir })
 
     // Create cache directory and write file
     const result = await execCommand(tools, {
@@ -366,7 +373,7 @@ describe('createBashTools with sandbox', () => {
     }
 
     const homeDir = os.homedir()
-    const tools = createBashTools({ cwd: tempDir, timeout: 10000 })
+    const tools = createBashTools({ cwd: tempDir })
 
     // Test 1: Workspace write (explicitly added)
     const workspaceFile = path.join(tempDir, 'workspace-test.txt')
@@ -466,7 +473,6 @@ describe('getAugmentedPath', () => {
     try {
       const tools = createBashTools({
         cwd: tempDir,
-        timeout: 10000,
         disableSandbox: true,
       })
 

@@ -4,10 +4,10 @@ import { describe, expect, it } from 'vitest'
 
 describe('getProviderConfig', () => {
   describe('Anthropic provider', () => {
-    it('requires Anthropic API key', () => {
+    it('requires Anthropic or OpenRouter API key', () => {
       expect(() =>
         getProviderConfig(LLMProvider.Anthropic_Claude_Opus_4_5, {}),
-      ).toThrow('Anthropic API key is required')
+      ).toThrow('Anthropic API key or OpenRouter API key is required')
     })
 
     it('returns correct config with API key', () => {
@@ -74,12 +74,33 @@ describe('getProviderConfig', () => {
       )?.thinking?.budgetTokens
       expect(budgetTokens).toBe(10000) // medium = 10000
     })
+
+    it('falls back to OpenRouter when only OpenRouter key is available', () => {
+      const config = getProviderConfig(LLMProvider.Anthropic_Claude_Opus_4_5, {
+        openrouterApiKey: 'test-key',
+      })
+
+      expect(config.model).toBeDefined()
+      expect(config.isReasoning).toBe(true)
+      expect(config.temperature).toBe(1.0)
+    })
+
+    it('prefers direct Anthropic API over OpenRouter when both keys available', () => {
+      const config = getProviderConfig(LLMProvider.Anthropic_Claude_Opus_4_5, {
+        anthropicApiKey: 'test-anthropic-key',
+        openrouterApiKey: 'test-openrouter-key',
+      })
+
+      // When using direct Anthropic, temperature is undefined for reasoning models
+      expect(config.temperature).toBeUndefined()
+      expect(config.providerOptions?.anthropic).toBeDefined()
+    })
   })
 
   describe('OpenAI provider', () => {
-    it('requires OpenAI API key', () => {
+    it('requires OpenAI or OpenRouter API key', () => {
       expect(() => getProviderConfig(LLMProvider.OpenAI_GPT_5_2, {})).toThrow(
-        'OpenAI API key is required',
+        'OpenAI API key or OpenRouter API key is required',
       )
     })
 
@@ -105,6 +126,26 @@ describe('getProviderConfig', () => {
         (config.providerOptions?.openai as { reasoningEffort?: string })
           ?.reasoningEffort,
       ).toBe('high')
+    })
+
+    it('falls back to OpenRouter when only OpenRouter key is available', () => {
+      const config = getProviderConfig(LLMProvider.OpenAI_GPT_5_2, {
+        openrouterApiKey: 'test-key',
+      })
+
+      expect(config.model).toBeDefined()
+      expect(config.isReasoning).toBe(true)
+      expect(config.temperature).toBe(1.0)
+    })
+
+    it('prefers direct OpenAI API over OpenRouter when both keys available', () => {
+      const config = getProviderConfig(LLMProvider.OpenAI_GPT_5_2, {
+        openaiApiKey: 'test-openai-key',
+        openrouterApiKey: 'test-openrouter-key',
+      })
+
+      // When using direct OpenAI, it has openai provider options
+      expect(config.providerOptions?.openai).toBeDefined()
     })
   })
 

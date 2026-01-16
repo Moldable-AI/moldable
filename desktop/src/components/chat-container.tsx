@@ -104,15 +104,15 @@ export function ChatContainer({
   // Track previous status to detect when streaming ends
   const prevStatusRef = useRef(status)
 
-  // Save conversation when streaming finishes
+  // Save conversation when streaming finishes (success or error)
   useEffect(() => {
     const wasStreaming =
       prevStatusRef.current === 'streaming' ||
       prevStatusRef.current === 'submitted'
-    const isNowReady = status === 'ready'
+    const isNowDone = status === 'ready' || status === 'error'
 
-    if (wasStreaming && isNowReady && messages.length > 0) {
-      // Save the conversation
+    if (wasStreaming && isNowDone && messages.length > 0) {
+      // Save the conversation (even on error, preserve what we have)
       saveConversation(messages, currentConversationId)
     }
 

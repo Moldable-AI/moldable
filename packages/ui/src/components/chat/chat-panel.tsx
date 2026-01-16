@@ -393,7 +393,7 @@ export function ChatPanel({
 
             {/* Messages area */}
             <ScrollArea ref={scrollAreaRef} className="min-w-0 flex-1 px-2">
-              <div className="min-w-0 space-y-4 py-4">
+              <div className="min-w-0 max-w-full space-y-4 overflow-hidden py-4">
                 {messages.length === 0 && welcomeMessage && (
                   <div className="bg-muted/50 text-muted-foreground mx-2 rounded-2xl p-4 text-sm">
                     {welcomeMessage}

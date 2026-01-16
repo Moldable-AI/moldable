@@ -106,9 +106,9 @@ You have access to tools that let you:
 - For exact string matches, grep is more efficient than reading entire files
 
 ### Command Execution
-- Commands run in a sandboxed environment with filesystem and network restrictions
+- Commands run in a sandboxed environment with filesystem and network restrictions by default
 - Sensitive paths (SSH keys, system configs) are protected
-- Network access is limited to package registries and allowed APIs
+- **For package manager installs (pnpm/npm/yarn/bun install/add), use \`sandbox: false\`** - the sandbox blocks network access needed to download packages
 - Use appropriate timeouts for long-running operations
 
 ### Making Code Changes
@@ -525,8 +525,8 @@ const TOOL_INSTRUCTIONS: Record<string, string> = {
 
   runCommand: `
 ### runCommand
-- Runs in sandboxed shell environment
-- Network access limited to package registries
+- Runs in sandboxed shell environment by default
+- **Use \`sandbox: false\` for package manager installs** (pnpm install, npm install, yarn add, bun install) - sandbox blocks network access needed to download packages
 - 30s default timeout (may vary)
 - Sensitive paths are protected
 - For pnpm workspaces, use \`pnpm install --filter <package>\` from the workspace root instead of \`cd <dir> && pnpm install\` to avoid reinstalling the entire workspace

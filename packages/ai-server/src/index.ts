@@ -316,19 +316,24 @@ async function handleChat(
       openrouterApiKey: process.env.OPENROUTER_API_KEY,
     }
 
-    // Check if we have the required API key
+    // Check if we have a valid API key (direct or via OpenRouter fallback)
     const isAnthropic = model.startsWith('anthropic/')
     const isOpenRouter = model.startsWith('openrouter/')
-    if (isAnthropic && !apiKeys.anthropicApiKey) {
-      sendError(res, 'ANTHROPIC_API_KEY not configured', 500)
+    const isOpenAI = model.startsWith('openai/')
+
+    // Anthropic models: need Anthropic key OR OpenRouter
+    if (isAnthropic && !apiKeys.anthropicApiKey && !apiKeys.openrouterApiKey) {
+      sendError(res, 'ANTHROPIC_API_KEY or OPENROUTER_API_KEY required', 500)
       return
     }
+    // OpenRouter-native models: need OpenRouter key
     if (isOpenRouter && !apiKeys.openrouterApiKey) {
       sendError(res, 'OPENROUTER_API_KEY not configured', 500)
       return
     }
-    if (!isAnthropic && !isOpenRouter && !apiKeys.openaiApiKey) {
-      sendError(res, 'OPENAI_API_KEY not configured', 500)
+    // OpenAI models: need OpenAI key OR OpenRouter
+    if (isOpenAI && !apiKeys.openaiApiKey && !apiKeys.openrouterApiKey) {
+      sendError(res, 'OPENAI_API_KEY or OPENROUTER_API_KEY required', 500)
       return
     }
 

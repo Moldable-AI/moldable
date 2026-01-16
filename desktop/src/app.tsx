@@ -510,6 +510,11 @@ export function App() {
               app={activeApp}
               workspaceId={activeWorkspace?.id ?? 'personal'}
               reloadKey={reloadKey}
+              onSuggestChatInput={(text) => {
+                setSuggestedChatInput(text)
+                setIsChatMinimized(false)
+                setIsChatExpanded(true)
+              }}
             />
           ) : (
             <Canvas

@@ -35,10 +35,11 @@ const itemVariants = {
 }
 
 // Grid classes need to be on the grid item (motion.div), not nested inside
+// All widgets are the same size on the grid
 const WIDGET_GRID_CLASSES = {
   small: 'col-span-1 row-span-1',
   medium: 'col-span-1 row-span-1',
-  large: 'col-span-2 row-span-1',
+  large: 'col-span-1 row-span-1',
 }
 
 export function Canvas({

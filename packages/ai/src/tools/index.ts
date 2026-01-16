@@ -13,8 +13,6 @@ export { createSkillsTools, SKILLS_TOOL_DESCRIPTIONS } from './skills'
 export type MoldableToolsOptions = {
   /** Base path for file operations (security boundary) */
   basePath?: string
-  /** Timeout for bash commands in milliseconds (default: 30000) */
-  commandTimeout?: number
   /** Max buffer size for command output (default: 1MB) */
   maxBuffer?: number
   /** Max results for search operations (default: 100) */
@@ -31,7 +29,6 @@ export type MoldableToolsOptions = {
 export function createMoldableTools(options: MoldableToolsOptions = {}) {
   const {
     basePath,
-    commandTimeout,
     maxBuffer,
     maxSearchResults,
     googleApiKey,
@@ -42,7 +39,6 @@ export function createMoldableTools(options: MoldableToolsOptions = {}) {
     ...createFilesystemTools({ basePath }),
     ...createBashTools({
       cwd: basePath,
-      timeout: commandTimeout,
       maxBuffer,
     }),
     ...createSearchTools({

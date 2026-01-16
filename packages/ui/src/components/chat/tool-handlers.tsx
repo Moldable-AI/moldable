@@ -98,7 +98,7 @@ function summarizeCommand(command: string): string {
   const firstLine = command.split('\n')[0]
   // Truncate if too long
   if (firstLine.length > 60) {
-    return firstLine.slice(0, 57) + '...'
+    return firstLine.slice(0, 25) + '...'
   }
   return firstLine
 }
@@ -112,24 +112,31 @@ function TerminalOutput({
   stderr,
   exitCode,
   error,
+  sandboxed,
 }: {
   command: string
   stdout?: string
   stderr?: string
   exitCode?: number
   error?: string
+  sandboxed?: boolean
 }) {
   const success = !error && (exitCode === 0 || exitCode === undefined)
   const hasOutput = stdout || stderr || error
 
   return (
-    <div className="border-terminal-border bg-terminal min-w-0 overflow-hidden rounded-lg border">
+    <div className="border-terminal-border bg-terminal min-w-0 max-w-full overflow-hidden rounded-lg border">
       {/* Terminal header - summarized command */}
       <div className="border-terminal-border bg-terminal-header flex min-w-0 items-center gap-2 border-b px-3 py-1.5">
         <Terminal className="text-terminal-muted size-3.5 shrink-0" />
         <code className="text-terminal-foreground min-w-0 flex-1 truncate font-mono text-xs">
           {summarizeCommand(command)}
         </code>
+        {sandboxed === false && (
+          <span className="shrink-0 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
+            unsandboxed
+          </span>
+        )}
         <CopyButton text={command} />
         {success ? (
           <Check className="text-success size-3.5 shrink-0" />
@@ -472,7 +479,7 @@ export const DEFAULT_TOOL_HANDLERS: Record<string, ToolHandler> = {
       // Show streaming command as it's being written
       if (command && command.trim()) {
         return (
-          <div className="border-terminal-border bg-terminal my-2 min-w-0 overflow-hidden rounded-lg border">
+          <div className="border-terminal-border bg-terminal my-2 min-w-0 max-w-full overflow-hidden rounded-lg border">
             <div className="bg-terminal-header flex min-w-0 items-center gap-2 px-3 py-1.5">
               <Terminal className="text-terminal-muted size-3.5 shrink-0 animate-pulse" />
               <code className="text-terminal-foreground min-w-0 flex-1 truncate font-mono text-xs">
@@ -490,7 +497,7 @@ export const DEFAULT_TOOL_HANDLERS: Record<string, ToolHandler> = {
 
       // Fallback when command hasn't started streaming
       return (
-        <div className="border-terminal-border bg-terminal my-2 min-w-0 overflow-hidden rounded-lg border">
+        <div className="border-terminal-border bg-terminal my-2 min-w-0 max-w-full overflow-hidden rounded-lg border">
           <div className="bg-terminal-header flex min-w-0 items-center gap-2 px-3 py-1.5">
             <Terminal className="text-terminal-muted size-3.5 shrink-0 animate-pulse" />
             <code className="text-terminal-foreground/60 min-w-0 flex-1 truncate font-mono text-xs italic">
@@ -511,7 +518,7 @@ export const DEFAULT_TOOL_HANDLERS: Record<string, ToolHandler> = {
       }
 
       return (
-        <div key={toolCallId} className="my-2 min-w-0">
+        <div key={toolCallId} className="my-2 min-w-0 max-w-full">
           <TerminalOutput
             command={result.command || 'command'}
             stdout={result.stdout}
@@ -529,17 +536,25 @@ export const DEFAULT_TOOL_HANDLERS: Record<string, ToolHandler> = {
     marker: ThinkingTimelineMarker.Terminal,
     inline: true,
     renderLoading: (args?: unknown) => {
-      const { command } = (args ?? {}) as { command?: string }
+      const { command, sandbox } = (args ?? {}) as {
+        command?: string
+        sandbox?: boolean
+      }
 
       // Show streaming command as it's being written
       if (command && command.trim()) {
         return (
-          <div className="border-terminal-border bg-terminal my-2 min-w-0 overflow-hidden rounded-lg border">
+          <div className="border-terminal-border bg-terminal my-2 min-w-0 max-w-full overflow-hidden rounded-lg border">
             <div className="bg-terminal-header flex min-w-0 items-center gap-2 px-3 py-1.5">
               <Terminal className="text-terminal-muted size-3.5 shrink-0 animate-pulse" />
               <code className="text-terminal-foreground min-w-0 flex-1 truncate font-mono text-xs">
                 {summarizeCommand(command)}
               </code>
+              {sandbox === false && (
+                <span className="shrink-0 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
+                  unsandboxed
+                </span>
+              )}
             </div>
             <div className="max-h-[150px] overflow-auto p-3">
               <div className="text-terminal-foreground break-all font-mono text-xs">
@@ -552,7 +567,7 @@ export const DEFAULT_TOOL_HANDLERS: Record<string, ToolHandler> = {
 
       // Fallback when command hasn't started streaming
       return (
-        <div className="border-terminal-border bg-terminal my-2 min-w-0 overflow-hidden rounded-lg border">
+        <div className="border-terminal-border bg-terminal my-2 min-w-0 max-w-full overflow-hidden rounded-lg border">
           <div className="bg-terminal-header flex min-w-0 items-center gap-2 px-3 py-1.5">
             <Terminal className="text-terminal-muted size-3.5 shrink-0 animate-pulse" />
             <code className="text-terminal-foreground/60 min-w-0 flex-1 truncate font-mono text-xs italic">
@@ -570,16 +585,18 @@ export const DEFAULT_TOOL_HANDLERS: Record<string, ToolHandler> = {
         exitCode?: number
         command?: string
         error?: string
+        sandboxed?: boolean
       }
 
       return (
-        <div key={toolCallId} className="my-2 min-w-0">
+        <div key={toolCallId} className="my-2 min-w-0 max-w-full">
           <TerminalOutput
             command={result.command || 'command'}
             stdout={result.stdout}
             stderr={result.stderr}
             exitCode={result.exitCode}
             error={result.error}
+            sandboxed={result.sandboxed}
           />
         </div>
       )
